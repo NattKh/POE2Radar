@@ -23,7 +23,20 @@ quality-of-life feature.
 - **Live state API** — a small HTTP server (`localhost:7777`) for troubleshooting:
   `GET /state`, `GET /entities` (filters: `category`, `alive`, `radius`, `limit`), `GET /landmarks`.
 
-## Build & run
+## Download (no build required)
+
+Grab the latest **`POE2Radar-vX.Y.Z-win-x64.zip`** from the
+[Releases page](https://github.com/Sikaka/POE2Radar/releases), unzip, and run `POE2Radar.Overlay.exe`
+**as Administrator** (reading another process's memory requires it) with PoE2 already running.
+The build is self-contained — no .NET install needed.
+
+Notes:
+- Windows SmartScreen may warn about an unsigned exe (expected for a community tool) — "More info →
+  Run anyway".
+- Antivirus may flag it because it reads game memory and (optionally) sends keystrokes; that's
+  inherent to what the tool does.
+
+## Build from source
 
 Requires the **.NET 10 SDK**, Windows x64.
 

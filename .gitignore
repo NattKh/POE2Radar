@@ -415,3 +415,8 @@ resources/GameHelper2-main/
 resources/research notes.txt
 resources/*note*.txt
 resources/_reference/
+
+# release build output
+publish/
+POE2Radar-*-win-x64.zip
+
