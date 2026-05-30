@@ -20,6 +20,7 @@ public sealed class Poe2Live
     private readonly Dictionary<nint, nint> _lifeAddr = new();     // entity → Life component (0 = none)
     private readonly Dictionary<nint, nint> _posAddr = new();      // entity → Positioned component (0 = none)
     private readonly Dictionary<nint, nint> _ompAddr = new();      // entity → ObjectMagicProperties (0 = none)
+    private readonly Dictionary<nint, nint> _chestAddr = new();    // entity → Chest component (0 = none)
     private readonly Dictionary<nint, EntityCategory> _category = new();
     private readonly Dictionary<nint, string> _meta = new();
     private readonly Dictionary<nint, bool> _hasIcon = new();      // entity has a MinimapIcon component (game POI)
@@ -37,14 +38,15 @@ public sealed class Poe2Live
     public enum Rarity { Normal = 0, Magic = 1, Rare = 2, Unique = 3, NonMonster = -1 }
 
     public readonly record struct EntityDot(
-        uint Id, nint Address, System.Numerics.Vector2 Grid, EntityCategory Category, string Metadata,
-        int HpCur, int HpMax, bool Poi, byte Reaction, Rarity Rarity)
+        uint Id, nint Address, System.Numerics.Vector2 Grid, Vector3 World, EntityCategory Category, string Metadata,
+        int HpCur, int HpMax, bool Poi, byte Reaction, Rarity Rarity, bool Opened)
     {
         /// <summary>Monsters are "alive" only with positive HP; non-life entities are always shown.</summary>
         public bool IsAlive => HpMax <= 0 || HpCur > 0;
         public bool HasLife => HpMax > 0;
         /// <summary>GameHelper2 rule: friendly when (Reaction &amp; 0x7F) == 1.</summary>
         public bool IsFriendly => (Reaction & 0x7F) == 1;
+        public float HpFraction => HpMax > 0 ? Math.Clamp((float)HpCur / HpMax, 0f, 1f) : 1f;
     }
 
     public readonly record struct MapUi(bool IsVisible, float ShiftX, float ShiftY, float Zoom);
@@ -169,7 +171,7 @@ public sealed class Poe2Live
     {
         if (areaInstance != _entCacheKey)
         {
-            _renderAddr.Clear(); _lifeAddr.Clear(); _posAddr.Clear(); _ompAddr.Clear();
+            _renderAddr.Clear(); _lifeAddr.Clear(); _posAddr.Clear(); _ompAddr.Clear(); _chestAddr.Clear();
             _category.Clear(); _meta.Clear(); _hasIcon.Clear();
             _entCacheKey = areaInstance;
         }
@@ -194,21 +196,20 @@ public sealed class Poe2Live
             queue.Enqueue(Ptr(node + Poe2.StdMapNode.Right));
 
             if (entity == 0 || id >= Poe2.EntityList.VisualIdThreshold) continue;
-            var grid = EntityGrid(entity);
-            if (grid is not { } g) continue;
+            var world = EntityWorld(entity);
+            if (world is not { } wv) continue;
+            var g = new System.Numerics.Vector2(wv.X / Poe2.WorldToGridRatio, wv.Y / Poe2.WorldToGridRatio);
 
             var cat = Categorize(entity);
-            // Read HP + rarity for things that can die (monsters/players); cheap via cached addrs.
             int hpCur = 0, hpMax = 0;
             var rarity = Rarity.NonMonster;
-            if (cat is EntityCategory.Monster or EntityCategory.Player)
-            {
-                (hpCur, hpMax) = ReadHp(entity);
-                if (cat == EntityCategory.Monster) rarity = ReadRarity(entity);
-            }
+            var opened = false;
+            if (cat is EntityCategory.Monster or EntityCategory.Player) (hpCur, hpMax) = ReadHp(entity);
+            if (cat is EntityCategory.Monster or EntityCategory.Chest) rarity = ReadRarity(entity);
+            if (cat == EntityCategory.Chest) opened = ReadChestOpened(entity);
 
-            dots.Add(new EntityDot(id, entity, g, cat, _meta.GetValueOrDefault(entity, ""), hpCur, hpMax,
-                HasIcon(entity), ReadReaction(entity), rarity));
+            dots.Add(new EntityDot(id, entity, g, wv, cat, _meta.GetValueOrDefault(entity, ""), hpCur, hpMax,
+                HasIcon(entity), ReadReaction(entity), rarity, opened));
         }
         return dots;
     }
@@ -455,7 +456,7 @@ public sealed class Poe2Live
 
     // ── internals ───────────────────────────────────────────────────────────
 
-    private System.Numerics.Vector2? EntityGrid(nint entity)
+    private Vector3? EntityWorld(nint entity)
     {
         if (!_renderAddr.TryGetValue(entity, out var render))
         {
@@ -464,7 +465,30 @@ public sealed class Poe2Live
         }
         if (render == 0) return null;
         if (!_reader.TryReadStruct<Vector3>(render + Poe2.Render.CurrentWorldPosition, out var w)) return null;
-        return new System.Numerics.Vector2(w.X / Poe2.WorldToGridRatio, w.Y / Poe2.WorldToGridRatio);
+        return w;
+    }
+
+    private System.Numerics.Vector2? EntityGrid(nint entity)
+        => EntityWorld(entity) is { } w ? new System.Numerics.Vector2(w.X / Poe2.WorldToGridRatio, w.Y / Poe2.WorldToGridRatio) : null;
+
+    /// <summary>Chest opened state: Chest component +0x168 is 1 while closed/openable, 0 once opened.</summary>
+    private bool ReadChestOpened(nint entity)
+    {
+        if (!_chestAddr.TryGetValue(entity, out var c)) { c = ResolveComponent(entity, "Chest"); _chestAddr[entity] = c; }
+        if (c == 0) return false;
+        return _reader.TryReadStruct<byte>(c + Poe2.ChestComponent.OpenState, out var b) && b == 0;
+    }
+
+    /// <summary>WorldToScreen matrix (16 floats, row-major) from Camera@InGameState+0x368. Null if unavailable.</summary>
+    public float[]? CameraMatrix(nint inGameState)
+    {
+        var cam = Ptr(inGameState + Poe2.InGameState.Camera);
+        if (cam == 0) return null;
+        var b = new byte[64];
+        if (_reader.TryReadBytes(cam + Poe2.Camera.WorldToScreenMatrix, b) != 64) return null;
+        var m = new float[16];
+        System.Buffer.BlockCopy(b, 0, m, 0, 64);
+        return m;
     }
 
     private EntityCategory Categorize(nint entity)

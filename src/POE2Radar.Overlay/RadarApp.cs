@@ -52,6 +52,7 @@ public sealed class RadarApp : IDisposable
     private string _flaskNote = "";
     private string _areaCode = "", _charName = "";
     private int _charLevel;
+    private float[]? _cameraMatrix;
 
     public void RequestShutdown() => _shutdown = true;
 
@@ -102,6 +103,7 @@ public sealed class RadarApp : IDisposable
             _areaCode = _live.AreaCode(areaInstance);
             _charName = _live.PlayerName(localPlayer);
             _charLevel = _live.PlayerLevel(localPlayer);
+            _cameraMatrix = _live.CameraMatrix(inGameState);
             TickAutoFlask(localPlayer);
 
             var now = DateTime.UtcNow;
@@ -135,7 +137,8 @@ public sealed class RadarApp : IDisposable
             ManaPct: _manaPct,
             FlaskNote: _flaskNote,
             AreaCode: _areaCode,
-            CharLevel: _charLevel);
+            CharLevel: _charLevel,
+            CameraMatrix: _cameraMatrix);
         _renderer.Render(ctx);
     }
 

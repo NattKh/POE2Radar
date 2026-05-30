@@ -77,6 +77,7 @@ public sealed class OverlayRenderer : IDisposable
             if (ctx.Active)
             {
                 DrawStatus(rt, ctx);
+                if (ctx.InGame) DrawNameplates(rt, ctx);   // world-space HP bars over elite mobs
                 if (ctx is { InGame: true, Map.IsVisible: true })
                     DrawMap(rt, ctx);
             }
@@ -105,6 +106,45 @@ public sealed class OverlayRenderer : IDisposable
                   : "");
         rt.FillRectangle(new Vortice.RawRectF(6, 6, 6 + line.Length * 7.3f + 10, 26), _bPanel!);
         rt.DrawText(line, _tf!, new Rect(12, 8, 1200, 22), _bText!, DrawTextOptions.Clip);
+    }
+
+    /// <summary>
+    /// World-space HP bars over Magic/Rare/Unique monsters, projected via the camera WorldToScreen
+    /// matrix. Drawn whether or not the big map is open (it's a heads-up combat overlay).
+    /// </summary>
+    private void DrawNameplates(ID2D1RenderTarget rt, RenderContext ctx)
+    {
+        if (ctx.CameraMatrix is not { } m) return;
+        float W = ctx.WindowWidth, H = ctx.WindowHeight;
+        foreach (var e in ctx.Entities)
+        {
+            if (e.Category != Poe2Live.EntityCategory.Monster || !e.IsAlive || e.HpMax <= 0) continue;
+            if (e.Rarity is Poe2Live.Rarity.Normal or Poe2Live.Rarity.NonMonster) continue; // Magic/Rare/Unique only
+
+            var w = e.World;
+            var cw = w.X*m[3] + w.Y*m[7] + w.Z*m[11] + m[15];
+            if (cw <= 0.0001f) continue;
+            var cx = w.X*m[0] + w.Y*m[4] + w.Z*m[8] + m[12];
+            var cy = w.X*m[1] + w.Y*m[5] + w.Z*m[9] + m[13];
+            var sx = (cx/cw/2f + 0.5f) * W;
+            var sy = (0.5f - cy/cw/2f) * H;
+            if (sx < 0 || sx > W || sy < 0 || sy > H) continue;
+
+            var (col, bw) = e.Rarity switch
+            {
+                Poe2Live.Rarity.Unique => (_bUnique!, 64f),
+                Poe2Live.Rarity.Rare   => (_bRare!, 50f),
+                _                      => (_bMagic!, 38f),
+            };
+            const float bh = 5f;
+            var bx = sx - bw / 2f;
+            var by = sy - 30f; // sit above the mob
+            var frac = e.HpFraction;
+            rt.FillRectangle(new Vortice.RawRectF(bx, by, bx + bw, by + bh), _bPanel!);
+            var fill = frac < 0.3f ? _bMonster! : col;
+            rt.FillRectangle(new Vortice.RawRectF(bx, by, bx + bw * frac, by + bh), fill);
+            rt.DrawRectangle(new Vortice.RawRectF(bx, by, bx + bw, by + bh), col, 1f);
+        }
     }
 
     private void DrawMap(ID2D1RenderTarget rt, RenderContext ctx)
@@ -156,7 +196,11 @@ public sealed class OverlayRenderer : IDisposable
                     break;
                 case Poe2Live.EntityCategory.Player:     brush = _bPlayer!; r = 3.0f; break;
                 case Poe2Live.EntityCategory.Npc:        brush = _bNpc!;    r = 3.5f; break;
-                case Poe2Live.EntityCategory.Chest:      brush = _bChest!;  r = 3.0f; break;
+                case Poe2Live.EntityCategory.Chest:
+                    if (e.Opened) continue;                                   // skip used chests
+                    if (e.Rarity is not (Poe2Live.Rarity.Rare or Poe2Live.Rarity.Unique)) continue; // rare+ only
+                    (brush, r) = e.Rarity == Poe2Live.Rarity.Unique ? (_bUnique!, 4.5f) : (_bRare!, 4.0f);
+                    break;
                 case Poe2Live.EntityCategory.Transition: brush = _bTrans!;  r = 3.5f; break;
                 default:
                     if (!e.Poi) continue;                // Object/Other → skip unless a POI

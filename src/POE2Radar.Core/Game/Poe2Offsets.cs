@@ -38,6 +38,7 @@ public static class Poe2
     {
         public const int AreaInstanceData = 0x290; // ✓ → AreaInstance (validated: target holds the local player)
         public const int UiRoot           = 0x2F0; // ✓ → root UiElement (self-ref; children are UI elements)
+        public const int Camera           = 0x368; // ✓ → Camera object (Zoom @ +0x528 == 1.0 confirmed)
         public const int WorldData        = 0x310; // (GH2-drift) → WorldData (area name + camera) — TBD
         public const int UiRootStructPtr  = 0x340; // (GH2-drift) reads 0 here — TBD
     }
@@ -142,11 +143,26 @@ public static class Poe2
         public const int Level = 0x204; // ✓ byte (low byte of a u32 slot)
     }
 
-    /// <summary>ObjectMagicProperties component — monster rarity.</summary>
+    /// <summary>Camera object (at InGameState+0x368). Holds the WorldToScreen matrix.</summary>
+    public static class Camera
+    {
+        // The matrix is stored duplicated (two identical 0x40-byte copies back-to-back); the first
+        // copy is at +0x1A0. Row-major Matrix4x4; screen = project(world * M). Validated visually.
+        public const int WorldToScreenMatrix = 0x1A0;
+        public const int Zoom = 0x528; // float, == 1.0 confirmed
+    }
+
+    /// <summary>ObjectMagicProperties component — monster/chest rarity.</summary>
     public static class ObjectMagicProperties
     {
         // ✓ validated live across 21 monsters (values 0 and 2 seen). Enum: 0=Normal,1=Magic,2=Rare,3=Unique.
         public const int Rarity = 0x144;
+    }
+
+    /// <summary>Chest component. ✓ validated live (opened chest = 0, closed = 1 at +0x168).</summary>
+    public static class ChestComponent
+    {
+        public const int OpenState = 0x168; // 1 = closed/openable, 0 = opened/used
     }
 
     /// <summary>Positioned component.</summary>
@@ -188,17 +204,6 @@ public static class Poe2
     public static class TgtFileStruct
     {
         public const int TgtPath = 0x08; // ✓ StdWString — full tile .tdt path (e.g. .../Feature/arena_01.tdt)
-    }
-
-    // ── Camera (WorldData+0xA0 → CameraStructure) — GH2, not yet live-checked ──
-    public static class WorldData
-    {
-        public const int CameraStructure = 0xA0; // (GH2) CameraStructure
-    }
-
-    public static class Camera
-    {
-        public const int WorldToScreenMatrix = 0x100; // (GH2) Matrix4x4 (duplicated back-to-back)
     }
 
     // ── Map UI — GH2, not yet live-checked ──

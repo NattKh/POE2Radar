@@ -192,7 +192,7 @@ static int RunFindPointer(MemoryReader reader, nint needle, nint? near, int wind
 // the player). Run standing still.
 static int RunCamera(ProcessHandle process, MemoryReader reader)
 {
-    var (igs, _, _, lp) = ResolveChain(process, reader);
+    var (_, igs, ai, lp) = ResolveChain(process, reader);   // 2nd element = InGameState
     if (igs == 0) { Console.Error.WriteLine("no chain"); return 1; }
     var render = ResolveComponentAddr(reader, lp, "Render");
     if (render == 0 || !reader.TryReadStruct<POE2Radar.Core.Game.Vector3>(render + 0x138, out var w))
@@ -200,30 +200,71 @@ static int RunCamera(ProcessHandle process, MemoryReader reader)
     Win.GetClientRect(Win.GetForegroundWindow(), out var rc);
     int W = rc.right - rc.left, H = rc.bottom - rc.top;
     if (W <= 0) { W = 1920; H = 1080; }
-    Console.WriteLine($"player world=({w.X:F1},{w.Y:F1},{w.Z:F1})  window={W}x{H}");
-
-    var buf = new byte[0x420];
-    for (var o = 0; o < 0x600; o += 8)
+    var cam368 = SafePtr(reader, igs + 0x368);
+    Console.WriteLine($"InGameState 0x{igs:X}  Camera(*+0x368) 0x{cam368:X}  player world=({w.X:F1},{w.Y:F1},{w.Z:F1})  window={W}x{H}");
+    var monsters = new List<POE2Radar.Core.Game.Vector3>();
+    var head = SafePtr(reader, ai + Poe2.AreaInstance.AwakeEntities);
+    if (head != 0)
     {
-        var cam = SafePtr(reader, igs + o);
-        if (cam == 0 || reader.TryReadBytes(cam, buf) < buf.Length) continue;
+        var q = new Queue<nint>(); q.Enqueue(SafePtr(reader, head + Poe2.StdMapNode.Parent));
+        var seen = new HashSet<nint>();
+        while (q.Count > 0 && seen.Count < 100000 && monsters.Count < 10)
+        {
+            var node = q.Dequeue();
+            if (node == 0 || node == head || !seen.Add(node)) continue;
+            if (!reader.TryReadStruct<byte>(node + Poe2.StdMapNode.IsNil, out var nil) || nil != 0) continue;
+            var ent = SafePtr(reader, node + Poe2.StdMapNode.ValueEntityPtr);
+            q.Enqueue(SafePtr(reader, node + Poe2.StdMapNode.Left));
+            q.Enqueue(SafePtr(reader, node + Poe2.StdMapNode.Right));
+            if (ent == 0 || !ReadEntityMetadata(reader, ent).Contains("/Monsters/", StringComparison.Ordinal)) continue;
+            var r = ResolveComponentAddr(reader, ent, "Render");
+            if (r != 0 && reader.TryReadStruct<POE2Radar.Core.Game.Vector3>(r + 0x138, out var mw)) monsters.Add(mw);
+        }
+    }
+    Console.WriteLine($"validating against {monsters.Count} monster world positions.");
+
+    static (float sx, float sy, float cw) Project(float[] m, POE2Radar.Core.Game.Vector3 v, int W, int H)
+    {
+        float cx = v.X*m[0]+v.Y*m[4]+v.Z*m[8]+m[12];
+        float cy = v.X*m[1]+v.Y*m[5]+v.Z*m[9]+m[13];
+        float cw = v.X*m[3]+v.Y*m[7]+v.Z*m[11]+m[15];
+        return ((cx/cw/2f + 0.5f) * W, (0.5f - cy/cw/2f) * H, cw);
+    }
+
+    // Zoom per the community note (Camera+0x528) — a sanity readout.
+    if (cam368 != 0 && reader.TryReadStruct<float>(cam368 + 0x528, out var zoom)) Console.WriteLine($"  Camera.Zoom(*+0x528) = {zoom}");
+
+    // Scan candidate camera objects: the +0x368 camera first, then any pointer in InGameState.
+    var objs = new List<(string label, nint addr)>();
+    if (cam368 != 0) objs.Add(("Camera+0x368", cam368));
+    for (var o = 0; o < 0x600; o += 8) { var p = SafePtr(reader, igs + o); if (p != 0 && p != cam368) objs.Add(($"IGS+0x{o:X3}", p)); }
+
+    var buf = new byte[0x600];
+    foreach (var (label, cam) in objs)
+    {
+        if (reader.TryReadBytes(cam, buf) < buf.Length) continue;
         for (var mo = 0; mo + 64 <= buf.Length; mo += 4)
         {
             var m = new float[16];
             for (var i = 0; i < 16; i++) m[i] = BitConverter.ToSingle(buf, mo + i * 4);
-            // v = (wx,wy,wz,1) * M   (row-major)
-            float X = w.X, Y = w.Y, Z = w.Z;
-            float cx = X*m[0]+Y*m[4]+Z*m[8]+m[12];
-            float cy = X*m[1]+Y*m[5]+Z*m[9]+m[13];
-            float cw = X*m[3]+Y*m[7]+Z*m[11]+m[15];
+            var (sx, sy, cw) = Project(m, w, W, H);
             if (cw < 1f || cw > 1_000_000f) continue;
-            var sx = (cx/cw/2f + 0.5f) * W;
-            var sy = (0.5f - cy/cw/2f) * H;
-            if (sx < W*0.2f || sx > W*0.8f || sy < H*0.2f || sy > H*0.8f) continue; // player ~ center
-            Console.WriteLine($"  cam@InGameState+0x{o:X3} (0x{cam:X}) matrix@+0x{mo:X3} -> screen=({sx:F0},{sy:F0})  w={cw:F1}");
+            if (sx < W*0.25f || sx > W*0.75f || sy < H*0.25f || sy > H*0.75f) continue; // player ~ center
+            int on = 0; float minx = 9e9f, maxx = -9e9f;
+            foreach (var mw in monsters)
+            {
+                var (msx, msy, mcw) = Project(m, mw, W, H);
+                if (mcw > 0 && msx >= 0 && msx <= W && msy >= 0 && msy <= H) { on++; minx = Math.Min(minx, msx); maxx = Math.Max(maxx, msx); }
+            }
+            var need = monsters.Count == 0 ? 0 : Math.Max(1, (int)(monsters.Count * 0.6));
+            if (on < need) continue;
+            // spreadX = how far apart monsters land horizontally — a real projection spreads them; a
+            // degenerate one stacks them near center.
+            var spread = on > 1 ? (int)(maxx - minx) : 0;
+            Console.WriteLine($"  {label} (0x{cam:X}) matrix@+0x{mo:X3} -> player=({sx:F0},{sy:F0}) w={cw:F1}  onScreen={on}/{monsters.Count} spreadX={spread}");
         }
     }
-    Console.WriteLine("Look for screen ≈ window center; that matrix is WorldToScreen.");
+    Console.WriteLine("Real W2S: from the Camera+0x368 object, player≈center, all monsters on-screen, and a healthy spreadX.");
     return 0;
 }
 

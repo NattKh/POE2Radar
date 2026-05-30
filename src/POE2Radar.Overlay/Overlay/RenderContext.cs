@@ -25,4 +25,6 @@ public sealed record RenderContext(
     string FlaskNote,
     // Area / character HUD.
     string AreaCode,
-    int CharLevel);
+    int CharLevel,
+    // WorldToScreen matrix (16 floats, row-major) for world-space nameplates; null if unavailable.
+    float[]? CameraMatrix);
