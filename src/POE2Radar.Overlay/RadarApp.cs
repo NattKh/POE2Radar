@@ -43,7 +43,8 @@ public sealed class RadarApp : IDisposable
     private List<(int X, int Y)>? _pathPoints;
     private NumVec2 _lastPathPlayerGrid;
     private string _lastPathTarget = "";
-    private bool _pathManualMode;
+    private string? _manualPathPattern;
+    private readonly List<(float ScreenX, float ScreenY, string Metadata)> _entityScreenPos = new();
 
     private const int LifeVk = 0x31, ManaVk = 0x32;
     private static readonly TimeSpan LifeCooldown = TimeSpan.FromMilliseconds(2500);
@@ -109,6 +110,7 @@ public sealed class RadarApp : IDisposable
         HandleCalibrationKeys();
         HandleCheatKeys();
         HandleSettingsToggle();
+        HandleAltClick();
 
         var inGame = _live.TryResolve(out var inGameState, out var areaInstance, out var localPlayer);
         var player = NumVec2.Zero;
@@ -167,7 +169,8 @@ public sealed class RadarApp : IDisposable
             Radar: _radarSettings,
             OverlayVisible: _overlayVisible,
             Watched: _watched,
-            PathPoints: _pathPoints);
+            PathPoints: _pathPoints,
+            EntityScreenPositions: _entityScreenPos);
         _renderer.Render(ctx);
     }
 
@@ -180,7 +183,7 @@ public sealed class RadarApp : IDisposable
             var next = _pathing.CycleNext();
             if (next != null)
             {
-                _pathManualMode = true;
+                _manualPathPattern = next.Pattern;
                 _pathPoints = null;
                 _lastPathTarget = "";
                 Console.WriteLine($"\nPath target: {next.Label} ({next.Pattern})");
@@ -243,6 +246,38 @@ public sealed class RadarApp : IDisposable
         }
     }
 
+    private void HandleAltClick()
+    {
+        var altHeld = Down(0x12); // VK_MENU (Alt)
+        _window.SetInteractive(altHeld);
+
+        if (!altHeld || !_window.HasClick) return;
+        _window.ConsumeClick();
+
+        var cx = _window.ClickX;
+        var cy = _window.ClickY;
+
+        // Find nearest entity to click position
+        string? bestMeta = null;
+        var bestDist = 20f * 20f; // 20px radius squared
+        foreach (var (sx, sy, meta) in _entityScreenPos)
+        {
+            var dx = sx - cx;
+            var dy = sy - cy;
+            var d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) { bestDist = d2; bestMeta = meta; }
+        }
+
+        if (bestMeta != null)
+        {
+            var shortName = bestMeta.Split('/')[^1].Split('@')[0];
+            _manualPathPattern = shortName;
+            _pathPoints = null;
+            _lastPathTarget = "";
+            Console.WriteLine($"\nAlt+click nav: {shortName}");
+        }
+    }
+
     private void UpdatePath(NumVec2 playerGrid)
     {
         if (!_radarSettings.ShowPath || _terrain == null || _pathing.All.Count == 0)
@@ -252,9 +287,9 @@ public sealed class RadarApp : IDisposable
         }
 
         string? targetPattern;
-        if (_pathManualMode)
+        if (_manualPathPattern != null)
         {
-            targetPattern = _pathing.Current?.Pattern;
+            targetPattern = _manualPathPattern;
         }
         else
         {

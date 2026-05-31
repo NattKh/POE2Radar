@@ -29,6 +29,11 @@ public sealed class OverlayWindow : IDisposable
     private nint _hwnd;
     private nint _hInstance;
     private OverlayNative.WndProc _wndProcDelegate = null!;
+    private bool _interactive;
+
+    public int ClickX { get; private set; }
+    public int ClickY { get; private set; }
+    public bool HasClick { get; private set; }
 
     private ID2D1Factory? _d2dFactory;
     private IDWriteFactory? _dwriteFactory;
@@ -248,12 +253,31 @@ public sealed class OverlayWindow : IDisposable
         return true;
     }
 
+    public void SetInteractive(bool on)
+    {
+        if (_interactive == on || _hwnd == 0) return;
+        _interactive = on;
+        var style = OverlayNative.GetWindowLongPtrW(_hwnd, OverlayNative.GWL_EXSTYLE);
+        style = on
+            ? (nint)((nuint)style & ~(nuint)OverlayNative.WS_EX_TRANSPARENT)
+            : (nint)((nuint)style | OverlayNative.WS_EX_TRANSPARENT);
+        OverlayNative.SetWindowLongPtrW(_hwnd, OverlayNative.GWL_EXSTYLE, style);
+    }
+
+    public void ConsumeClick() => HasClick = false;
+
     private nint WndProc(nint hwnd, uint msg, nuint wParam, nint lParam)
     {
-        if (msg == OverlayNative.WM_DESTROY)
+        switch (msg)
         {
-            OverlayNative.PostQuitMessage(0);
-            return 0;
+            case OverlayNative.WM_DESTROY:
+                OverlayNative.PostQuitMessage(0);
+                return 0;
+            case OverlayNative.WM_LBUTTONDOWN:
+                ClickX = (short)(lParam & 0xFFFF);
+                ClickY = (short)((lParam >> 16) & 0xFFFF);
+                HasClick = true;
+                return 0;
         }
         return OverlayNative.DefWindowProcW(hwnd, msg, wParam, lParam);
     }

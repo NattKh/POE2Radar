@@ -283,6 +283,7 @@ public sealed class OverlayRenderer : IDisposable
         // with a MinimapIcon component) always draw with a white ring, even if their category
         // would otherwise be filtered (waypoints, checkpoints, shrines, …).
         var rs = ctx.Radar;
+        ctx.EntityScreenPositions?.Clear();
         foreach (var e in ctx.Entities)
         {
             ID2D1SolidColorBrush brush; float r; Icon icon;
@@ -321,6 +322,7 @@ public sealed class OverlayRenderer : IDisposable
             }
             var p = Project(new NumVec2(e.Grid.X, e.Grid.Y), player, center, scale);
             DrawIcon(rt, icon, p, r, brush, filled: true);
+            ctx.EntityScreenPositions?.Add((p.X, p.Y, e.Metadata));
 
             var watchMatch = ctx.Watched?.Match(e.Metadata);
             if (watchMatch is { Enabled: true })

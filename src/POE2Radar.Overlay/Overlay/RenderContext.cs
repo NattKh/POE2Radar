@@ -28,4 +28,5 @@ public sealed record RenderContext(
     RadarSettings? Radar = null,
     bool OverlayVisible = true,
     POE2Radar.Overlay.Web.WatchedEntities? Watched = null,
-    List<(int X, int Y)>? PathPoints = null);
+    List<(int X, int Y)>? PathPoints = null,
+    List<(float ScreenX, float ScreenY, string Metadata)>? EntityScreenPositions = null);
