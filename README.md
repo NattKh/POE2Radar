@@ -1,10 +1,10 @@
 # POE2Radar
 
-An external map/radar overlay for Path of Exile 2 with built-in cheats, a web dashboard, and full customization.
+An external map/radar overlay for Path of Exile 2 with built-in mods, a web dashboard, and full customization.
 
 Attaches to the PoE2 client, reads game state out of process memory (no injection, no hooks), draws a terrain + entity overlay, and optionally patches game constants for quality-of-life tweaks.
 
-> **Use at your own risk.** This reads another process's memory, patches game instructions, and can send keystrokes. This may violate Path of Exile's Terms of Service and could put your account at risk.
+> **Use at your own risk.** This reads another process's memory, patches game instructions, and can send keystrokes. This may violate Path of Exile's Terms of Service and could put your account at risk. Educational purposes only. 
 
 ---
 
