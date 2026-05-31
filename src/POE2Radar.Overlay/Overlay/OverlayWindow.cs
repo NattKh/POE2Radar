@@ -45,12 +45,15 @@ public sealed class OverlayWindow : IDisposable
     public int OriginY { get; private set; }
     public bool IsValid => _hwnd != 0 && _renderTarget != null;
 
+
     /// <summary>
     /// The render target. Same shape as before (ID2D1RenderTarget) but backed by the DIB
     /// section instead of an HWND. Renderer code doesn't have to change.
     /// </summary>
     public ID2D1RenderTarget RenderTarget => _renderTarget!;
     public IDWriteFactory DWriteFactory => _dwriteFactory!;
+
+    private string _className = null!;
 
     private OverlayWindow() { }
 
@@ -63,6 +66,7 @@ public sealed class OverlayWindow : IDisposable
 
     private void Initialize()
     {
+        _className = "wc_" + Path.GetRandomFileName().Replace(".", "");
         _hInstance = OverlayNative.GetModuleHandleW(null);
         _wndProcDelegate = WndProc;
         RegisterWindowClass();
@@ -72,7 +76,7 @@ public sealed class OverlayWindow : IDisposable
 
     private unsafe void RegisterWindowClass()
     {
-        var className = "POE2RadarOverlay\0";
+        var className = _className + "\0";
         fixed (char* pName = className)
         {
             var wc = new OverlayNative.WNDCLASSEXW
@@ -95,10 +99,11 @@ public sealed class OverlayWindow : IDisposable
                     | OverlayNative.WS_EX_NOACTIVATE
                     | OverlayNative.WS_EX_TOOLWINDOW;
 
+        var wndTitle = "wt_" + Path.GetRandomFileName().Replace(".", "");
         _hwnd = OverlayNative.CreateWindowExW(
             exStyle,
-            "POE2RadarOverlay",
-            "POE2RadarOverlay",
+            _className,
+            wndTitle,
             OverlayNative.WS_POPUP | OverlayNative.WS_VISIBLE,
             0, 0, 800, 600,
             0, 0, _hInstance, 0);

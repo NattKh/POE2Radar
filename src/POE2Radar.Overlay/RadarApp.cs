@@ -1,18 +1,16 @@
 using System.Runtime.InteropServices;
 using NumVec2 = System.Numerics.Vector2;
 using POE2Radar.Core;
+using POE2Radar.Core.Cheats;
 using POE2Radar.Core.Game;
 using POE2Radar.Overlay.Input;
 using POE2Radar.Overlay.Native;
 using POE2Radar.Overlay.Web;
 
+#pragma warning disable CA1416
+
 namespace POE2Radar.Overlay;
 
-/// <summary>
-/// Drives the PoE2 radar: per-tick resolve chain → read player/entities/terrain/map → render.
-/// Read-only. Render rate ~144 Hz (player blip tracks live); the heavier entity/terrain walk
-/// runs at ~30 Hz. Projection scale/offset are tweakable live via hotkeys for calibration.
-/// </summary>
 public sealed class RadarApp : IDisposable
 {
     private const int TargetHz = 144;
@@ -21,9 +19,13 @@ public sealed class RadarApp : IDisposable
     private readonly ProcessHandle _process;
     private readonly MemoryReader _reader;
     private readonly Poe2Live _live;
+    private readonly CheatManager _cheats;
     private readonly OverlayWindow _window;
     private readonly OverlayRenderer _renderer;
+    private readonly WatchedEntities _watched;
     private readonly ApiServer _api;
+    private readonly RadarSettings _radarSettings;
+    private SettingsForm? _settingsForm;
     private volatile RadarState _state = RadarState.Empty;
 
     private DateTime _worldAt = DateTime.MinValue;
@@ -35,17 +37,12 @@ public sealed class RadarApp : IDisposable
     private nint _gameHwnd;
     private volatile bool _shutdown;
 
-    // Live projection calibration (PageUp/Down = scale, arrows = offset, Home = reset).
-    private float _scaleMul = 1.0f;
-    private float _offX, _offY;
     private DateTime _nextKeyAt = DateTime.MinValue;
 
-    // ── Auto-flask (opt-in input). Foreground + in-game gated; F8 master kill-switch. ──
-    private const int   LifeVk = 0x31, ManaVk = 0x32;     // '1' = life flask, '2' = mana flask
-    private const float LifeThresholdPct = 65f, ManaThresholdPct = 30f;
+    private const int LifeVk = 0x31, ManaVk = 0x32;
     private static readonly TimeSpan LifeCooldown = TimeSpan.FromMilliseconds(2500);
     private static readonly TimeSpan ManaCooldown = TimeSpan.FromMilliseconds(2000);
-    private bool _autoFlask = true;                        // auto-on; toggle with F8
+    private bool _autoFlask = true;
     private DateTime _lifeFiredAt = DateTime.MinValue, _manaFiredAt = DateTime.MinValue;
     private DateTime _nextToggleAt = DateTime.MinValue;
     private float _hpPct = 100f, _manaPct = 100f;
@@ -53,6 +50,17 @@ public sealed class RadarApp : IDisposable
     private string _areaCode = "", _charName = "";
     private int _charLevel;
     private float[]? _cameraMatrix;
+    private bool _overlayVisible = true;
+
+    private DateTime _nextCheatKeyAt = DateTime.MinValue;
+    private static readonly (int Vk, string Name)[] CheatKeys =
+    [
+        (0x70, "NoAtlasFog"),        // F1
+        (0x71, "RevealMap"),         // F2
+        (0x72, "InfiniteZoom"),      // F3
+        (0x73, "EnemyHealthBars"),   // F4
+        (0x74, "PlayerLightRadius"), // F5
+    ];
 
     public void RequestShutdown() => _shutdown = true;
 
@@ -61,9 +69,16 @@ public sealed class RadarApp : IDisposable
         _process = process;
         _reader = reader;
         _live = new Poe2Live(reader, gameStateSlot);
+        _cheats = new CheatManager(process, reader);
+        Console.WriteLine("\nScanning cheat patterns...");
+        _cheats.ScanAndResolve();
+        Console.WriteLine("Hotkeys: F1-F5 cheats, F8 flask, F9 settings, F10 overlay, F11 web dashboard\n");
         _window = OverlayWindow.Create();
         _renderer = new OverlayRenderer(_window);
-        _api = new ApiServer(() => _state);
+        var configDir = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? ".", "config");
+        _radarSettings = RadarSettings.Load(Path.Combine(configDir, "radar_settings.json"));
+        _watched = new WatchedEntities(Path.Combine(configDir, "watched_entities.json"));
+        _api = new ApiServer(() => _state, _watched, _radarSettings);
         try { _api.Start(); Console.WriteLine("API on http://localhost:7777 (/state, /entities)"); }
         catch (Exception ex) { Console.Error.WriteLine($"API server disabled: {ex.Message}"); }
     }
@@ -85,6 +100,8 @@ public sealed class RadarApp : IDisposable
     private void Tick()
     {
         HandleCalibrationKeys();
+        HandleCheatKeys();
+        HandleSettingsToggle();
 
         var inGame = _live.TryResolve(out var inGameState, out var areaInstance, out var localPlayer);
         var player = NumVec2.Zero;
@@ -93,7 +110,6 @@ public sealed class RadarApp : IDisposable
 
         if (inGame)
         {
-            // AreaInstance is a fresh object per area — use its address to invalidate per-area caches.
             if (areaInstance != _lastAreaInstance) { _terrain = null; _lastAreaInstance = areaInstance; }
             _areaHash = _live.AreaHash(areaInstance);
             areaLevel = _live.AreaLevel(areaInstance);
@@ -112,7 +128,7 @@ public sealed class RadarApp : IDisposable
                 _worldAt = now;
                 _terrain ??= _live.Terrain(areaInstance);
                 _entities = _live.Entities(areaInstance);
-                _landmarks = _live.Landmarks(areaInstance); // cached per area in Poe2Live
+                _landmarks = _live.Landmarks(areaInstance);
             }
         }
 
@@ -130,22 +146,58 @@ public sealed class RadarApp : IDisposable
             Landmarks: _landmarks,
             AreaHash: _areaHash,
             Terrain: _terrain,
-            ScaleMul: _scaleMul,
-            OffsetX: _offX,
-            OffsetY: _offY,
+            ScaleMul: _radarSettings.ScaleMul,
+            OffsetX: _radarSettings.OffsetX,
+            OffsetY: _radarSettings.OffsetY,
             HpPct: _hpPct,
             ManaPct: _manaPct,
             FlaskNote: _flaskNote,
             AreaCode: _areaCode,
             CharLevel: _charLevel,
-            CameraMatrix: _cameraMatrix);
+            CameraMatrix: _cameraMatrix,
+            CheatStatus: _cheats.GetStatus(),
+            Radar: _radarSettings,
+            OverlayVisible: _overlayVisible,
+            Watched: _watched);
         _renderer.Render(ctx);
     }
 
-    /// <summary>
-    /// Auto-flask: press the life/mana flask key when the corresponding pool drops below its
-    /// threshold. Hard-gated: enabled + PoE2 is the foreground window + per-flask cooldown.
-    /// </summary>
+    private void HandleSettingsToggle()
+    {
+        // F11 open web dashboard
+        if (Down(0x7A) && DateTime.UtcNow >= _nextToggleAt)
+        {
+            _nextToggleAt = DateTime.UtcNow.AddMilliseconds(500);
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("http://localhost:7777") { UseShellExecute = true }); }
+            catch { }
+        }
+        // F10 toggle overlay visibility
+        if (Down(0x79) && DateTime.UtcNow >= _nextToggleAt)
+        {
+            _overlayVisible = !_overlayVisible;
+            _nextToggleAt = DateTime.UtcNow.AddMilliseconds(300);
+            Console.WriteLine($"\nOverlay: {(_overlayVisible ? "VISIBLE" : "HIDDEN")}");
+        }
+        if (Down(0x78) && DateTime.UtcNow >= _nextToggleAt) // F9
+        {
+            _nextToggleAt = DateTime.UtcNow.AddMilliseconds(300);
+            if (_settingsForm == null || _settingsForm.IsDisposed)
+            {
+                _settingsForm = new SettingsForm(_cheats, _radarSettings);
+                _settingsForm.Show();
+            }
+            else if (_settingsForm.Visible)
+            {
+                _settingsForm.Hide();
+            }
+            else
+            {
+                _settingsForm.SyncState();
+                _settingsForm.Show();
+            }
+        }
+    }
+
     private void TickAutoFlask(nint localPlayer)
     {
         if (_live.PlayerVitals(localPlayer) is not { } v) return;
@@ -155,21 +207,22 @@ public sealed class RadarApp : IDisposable
         if (GetForegroundWindow() != _gameHwnd) { _flaskNote = "paused (PoE2 not focused)"; return; }
         _flaskNote = "armed";
 
+        var hpThresh = _radarSettings.HpThreshold;
+        var manaThresh = _radarSettings.ManaThreshold;
+
         var now = DateTime.UtcNow;
-        if (v.HpPct < LifeThresholdPct && now - _lifeFiredAt >= LifeCooldown)
+        if (v.HpPct < hpThresh && now - _lifeFiredAt >= LifeCooldown)
         {
             SendInputNative.Tap(LifeVk); _lifeFiredAt = now; _flaskNote = $"life@{v.HpPct:F0}%";
         }
-        if (v.ManaPct < ManaThresholdPct && now - _manaFiredAt >= ManaCooldown)
+        if (v.ManaPct < manaThresh && now - _manaFiredAt >= ManaCooldown)
         {
             SendInputNative.Tap(ManaVk); _manaFiredAt = now; _flaskNote = $"mana@{v.ManaPct:F0}%";
         }
     }
 
-    /// <summary>Live projection calibration so the overlay can be aligned without rebuilds.</summary>
     private void HandleCalibrationKeys()
     {
-        // F8 master kill-switch for auto-flask (debounced).
         if (Down(0x77) && DateTime.UtcNow >= _nextToggleAt)
         {
             _autoFlask = !_autoFlask;
@@ -178,18 +231,30 @@ public sealed class RadarApp : IDisposable
         }
         if (DateTime.UtcNow < _nextKeyAt) return;
         var changed = true;
-        if (Down(0x21)) _scaleMul *= 1.03f;            // PageUp
-        else if (Down(0x22)) _scaleMul /= 1.03f;       // PageDown
-        else if (Down(0x25)) _offX -= 4;               // Left
-        else if (Down(0x27)) _offX += 4;               // Right
-        else if (Down(0x26)) _offY -= 4;               // Up
-        else if (Down(0x28)) _offY += 4;               // Down
-        else if (Down(0x24)) { _scaleMul = 1f; _offX = _offY = 0; } // Home
+        if (Down(0x21)) _radarSettings.ScaleMul *= 1.03f;
+        else if (Down(0x22)) _radarSettings.ScaleMul /= 1.03f;
+        else if (Down(0x25)) _radarSettings.OffsetX -= 4;
+        else if (Down(0x27)) _radarSettings.OffsetX += 4;
+        else if (Down(0x26)) _radarSettings.OffsetY -= 4;
+        else if (Down(0x28)) _radarSettings.OffsetY += 4;
+        else if (Down(0x24)) { _radarSettings.ScaleMul = 1f; _radarSettings.OffsetX = 0; _radarSettings.OffsetY = 0; }
         else changed = false;
         if (changed)
         {
             _nextKeyAt = DateTime.UtcNow.AddMilliseconds(40);
-            Console.Write($"\rcalib: scaleMul={_scaleMul:F3} off=({_offX:F0},{_offY:F0})        ");
+            Console.Write($"\rcalib: scaleMul={_radarSettings.ScaleMul:F3} off=({_radarSettings.OffsetX:F0},{_radarSettings.OffsetY:F0})        ");
+        }
+    }
+
+    private void HandleCheatKeys()
+    {
+        if (DateTime.UtcNow < _nextCheatKeyAt) return;
+        foreach (var (vk, name) in CheatKeys)
+        {
+            if (!Down(vk)) continue;
+            _cheats.Toggle(name);
+            _nextCheatKeyAt = DateTime.UtcNow.AddMilliseconds(300);
+            break;
         }
     }
 
@@ -203,6 +268,8 @@ public sealed class RadarApp : IDisposable
 
     public void Dispose()
     {
+        _cheats.RestoreAll();
+        _settingsForm?.Dispose();
         _api.Dispose();
         _renderer.Dispose();
         _window.Dispose();

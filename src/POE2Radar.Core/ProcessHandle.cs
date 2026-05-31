@@ -64,7 +64,8 @@ public sealed class ProcessHandle : IDisposable
     public static ProcessHandle AttachToProcess(int processId, string? expectedProcessName = null)
     {
         var handle = NativeMethods.OpenProcess(
-            NativeMethods.PROCESS_VM_READ | NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION,
+            NativeMethods.PROCESS_VM_READ | NativeMethods.PROCESS_VM_WRITE | NativeMethods.PROCESS_VM_OPERATION
+            | NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION,
             false,
             (uint)processId);
 

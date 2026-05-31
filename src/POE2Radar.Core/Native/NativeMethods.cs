@@ -5,6 +5,8 @@ namespace POE2Radar.Core.Native;
 internal static partial class NativeMethods
 {
     public const uint PROCESS_VM_READ = 0x0010;
+    public const uint PROCESS_VM_WRITE = 0x0020;
+    public const uint PROCESS_VM_OPERATION = 0x0008;
     public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
@@ -21,7 +23,15 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static unsafe partial bool ReadProcessMemory(nint hProcess, nint lpBaseAddress, void* lpBuffer, nuint nSize, out nuint lpNumberOfBytesRead);
 
-    // NtReadVirtualMemory â€” single syscall, faster than ReadProcessMemory which adds extra validation.
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool VirtualProtectEx(nint hProcess, nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static unsafe partial bool WriteProcessMemory(nint hProcess, nint lpBaseAddress, byte* lpBuffer, nuint nSize, out nuint lpNumberOfBytesWritten);
+
+    // NtReadVirtualMemory -- single syscall, faster than ReadProcessMemory which adds extra validation.
     // Used by ProcessMemoryUtilities and most external memory readers. Signature matches ntdll export.
     [LibraryImport("ntdll.dll")]
     public static unsafe partial int NtReadVirtualMemory(nint hProcess, nint baseAddress, void* buffer, nuint size, out nuint bytesRead);
@@ -45,7 +55,7 @@ internal static partial class NativeMethods
         public nint EntryPoint;
     }
 
-    // VirtualQueryEx â€” describes a range of virtual address space in a target process.
+    // VirtualQueryEx -- describes a range of virtual address space in a target process.
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial nuint VirtualQueryEx(nint hProcess, nint lpAddress, out MemoryBasicInformation lpBuffer, nuint dwLength);
 

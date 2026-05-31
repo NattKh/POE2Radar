@@ -286,36 +286,48 @@ public sealed class Poe2Live
         var count = ((long)last - (long)first) / Poe2.TileStructureSize;
         if (count is <= 0 or > 1_000_000) return result;
 
-        // Accumulate sum-of-positions + count per interesting path. Cache path by TgtFilePtr so
-        // we read each distinct tile type's StdWString once (dozens), not once per tile (thousands).
-        var pathCache = new Dictionary<nint, string?>();
+        var ac = AreaCode(areaInstance);
+        var pathCache = new Dictionary<nint, (string? path, string? label)>();
         var sumX = new Dictionary<string, double>();
         var sumY = new Dictionary<string, double>();
         var num = new Dictionary<string, int>();
+        var labels = new Dictionary<string, string>();
 
         for (long i = 0; i < count; i++)
         {
             var tile = first + (nint)(i * Poe2.TileStructureSize);
             var tgtFile = Ptr(tile + Poe2.TileStructure.TgtFilePtr);
             if (tgtFile == 0) continue;
-            if (!pathCache.TryGetValue(tgtFile, out var path))
+            if (!pathCache.TryGetValue(tgtFile, out var cached))
             {
                 var p = ReadStdWString(tgtFile + Poe2.TgtFileStruct.TgtPath);
-                path = IsInterestingLandmark(p) ? p : null;
-                pathCache[tgtFile] = path;
+                var customLabel = CustomLandmarkData.TryMatch(ac, p);
+                if (customLabel != null)
+                    cached = (p, customLabel);
+                else if (IsInterestingLandmark(p))
+                    cached = (p, null);
+                else
+                    cached = (null, null);
+                pathCache[tgtFile] = cached;
             }
-            if (path is null) continue;
+            if (cached.path is null) continue;
 
+            var key = cached.path;
             var gx = (i % tilesX) * Poe2.Terrain.TileGridCells;
             var gy = (i / tilesX) * Poe2.Terrain.TileGridCells;
-            sumX[path] = sumX.GetValueOrDefault(path) + gx;
-            sumY[path] = sumY.GetValueOrDefault(path) + gy;
-            num[path] = num.GetValueOrDefault(path) + 1;
+            sumX[key] = sumX.GetValueOrDefault(key) + gx;
+            sumY[key] = sumY.GetValueOrDefault(key) + gy;
+            num[key] = num.GetValueOrDefault(key) + 1;
+            if (cached.label != null)
+                labels[key] = cached.label;
         }
 
         foreach (var (path, n) in num)
-            result.Add(new Landmark(LandmarkName(path), path,
+        {
+            var name = labels.TryGetValue(path, out var custom) ? custom : LandmarkName(path);
+            result.Add(new Landmark(name, path,
                 new System.Numerics.Vector2((float)(sumX[path] / n), (float)(sumY[path] / n)), n));
+        }
         return result;
     }
 
@@ -323,7 +335,8 @@ public sealed class Poe2Live
     {
         if (string.IsNullOrEmpty(p)) return false;
         foreach (var kw in new[] { "arena", "boss", "treasure", "waypoint", "encounter", "ritual",
-                                   "vault", "reward", "unique", "checkpoint", "altar", "shrine" })
+                                   "vault", "reward", "unique", "checkpoint", "altar", "shrine",
+                                   "transition", "entrance", "feature", "landmark" })
             if (p.Contains(kw, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }

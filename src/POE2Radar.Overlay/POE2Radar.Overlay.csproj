@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <AssemblyName>Overlay</AssemblyName>
+    <RootNamespace>POE2Radar.Overlay</RootNamespace>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
@@ -10,6 +12,7 @@
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +21,10 @@
 
   <ItemGroup>
     <PackageReference Include="Vortice.Direct2D1" Version="3.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Web\entity_database.json" />
   </ItemGroup>
 
 </Project>

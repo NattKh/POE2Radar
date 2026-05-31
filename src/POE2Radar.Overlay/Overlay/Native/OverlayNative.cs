@@ -41,10 +41,13 @@ internal static partial class OverlayNative
     public const uint PM_REMOVE   = 0x0001;
 
     // Common messages
-    public const uint WM_DESTROY = 0x0002;
-    public const uint WM_QUIT    = 0x0012;
-    public const uint WM_PAINT   = 0x000F;
-    public const uint WM_SIZE    = 0x0005;
+    public const uint WM_DESTROY      = 0x0002;
+    public const uint WM_QUIT         = 0x0012;
+    public const uint WM_PAINT        = 0x000F;
+    public const uint WM_SIZE         = 0x0005;
+    public const uint WM_LBUTTONDOWN  = 0x0201;
+    public const uint WM_LBUTTONUP    = 0x0202;
+    public const uint WM_MOUSEMOVE    = 0x0200;
 
     // Class styles
     public const uint CS_HREDRAW = 0x0002;

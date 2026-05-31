@@ -1,0 +1,326 @@
+namespace POE2Radar.Overlay.Web;
+
+public static class DashboardHtml
+{
+    public const string Page = """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Radar Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a24;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:16px;max-width:900px;margin:0 auto}
+h1{font-size:18px;color:#78b4ff;margin-bottom:8px}
+h2{font-size:14px;color:#78b4ff;margin:12px 0 6px}
+.status{background:#252530;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#aaa}
+.status span{color:#fff}
+.tabs{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
+.tab{padding:6px 16px;background:#252530;border:none;color:#aaa;cursor:pointer;border-radius:6px 6px 0 0;font-size:13px}
+.tab.active{background:#2a2a3a;color:#78b4ff}
+.panel{display:none;background:#2a2a3a;border-radius:0 6px 6px 6px;padding:12px}
+.panel.active{display:block}
+input[type=text]{background:#1e1e28;border:1px solid #444;color:#fff;padding:4px 8px;border-radius:4px;font-size:13px}
+input[type=color]{width:36px;height:24px;border:1px solid #555;background:#1e1e28;cursor:pointer;vertical-align:middle;border-radius:3px}
+input[type=number]{background:#1e1e28;border:1px solid #444;color:#fff;padding:4px 8px;border-radius:4px;width:80px;font-size:13px}
+input[type=range]{width:150px;vertical-align:middle}
+.search{margin-bottom:8px;display:flex;gap:8px;align-items:center}
+.search input[type=text]{width:250px}
+.filter-btns{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.filter-btn{padding:3px 10px;background:#333;border:1px solid #555;color:#ccc;cursor:pointer;border-radius:4px;font-size:12px}
+.filter-btn.active{background:#3a5080;border-color:#78b4ff;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:4px 8px;background:#1e1e28;color:#78b4ff;position:sticky;top:0}
+td{padding:4px 8px;border-bottom:1px solid #333}
+tr:hover{background:#333}
+tr.watched{background:#2a3a2a}
+.scrollbox{max-height:450px;overflow-y:auto}
+.btn{padding:3px 10px;border:none;border-radius:4px;cursor:pointer;font-size:12px}
+.btn-add{background:#2a5a2a;color:#8f8}.btn-add:hover{background:#3a7a3a}
+.btn-rm{background:#5a2a2a;color:#f88}.btn-rm:hover{background:#7a3a3a}
+.btn-save{background:#3a5080;color:#9cf;padding:6px 20px;font-size:13px}.btn-save:hover{background:#4a60a0}
+.watched-item{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#252530;border-radius:4px;margin-bottom:4px}
+.watched-item .pattern{flex:1;font-family:monospace;font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.watched-item .label{color:#afc;font-size:13px;font-weight:bold;min-width:100px}
+.watched-item .swatch{width:20px;height:20px;border-radius:3px;border:1px solid #555;flex-shrink:0}
+.add-form{display:flex;gap:6px;align-items:center;padding:8px;background:#252530;border-radius:6px;margin-bottom:8px;flex-wrap:wrap}
+.meta-short{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:11px}
+.cat{padding:2px 6px;border-radius:3px;font-size:11px;font-weight:bold}
+.cat-Monster{background:#4a2020;color:#f55}.cat-Player{background:#1a3a4a;color:#5cf}
+.cat-Npc{background:#4a4a10;color:#fd5}.cat-Chest{background:#4a3010;color:#f90}
+.cat-Transition{background:#1a4a2a;color:#6f9}.cat-Other{background:#333;color:#aaa}
+.rarity-Magic{color:#79a8ff}.rarity-Rare{color:#ffd926}.rarity-Unique{color:#ff7300}
+.auto-refresh{font-size:12px;color:#666;margin-left:auto}
+.db-path{font-family:monospace;font-size:11px;color:#bbb}
+.db-cat{color:#78b4ff;font-size:11px}
+.count{background:#333;padding:2px 6px;border-radius:10px;font-size:11px;color:#aaa;margin-left:4px}
+.setting-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;min-height:28px}
+.setting-row label{width:160px;font-size:13px;color:#ccc;flex-shrink:0}
+.setting-row .val{font-size:12px;color:#78b4ff;width:50px;text-align:right}
+.section{background:#252530;border-radius:6px;padding:10px 14px;margin-bottom:10px}
+.section h3{font-size:13px;color:#78b4ff;margin-bottom:8px}
+.saved{color:#5f5;font-size:12px;opacity:0;transition:opacity 0.3s}
+.saved.show{opacity:1}
+</style></head><body>
+<h1>Radar Dashboard</h1>
+<div class="status" id="status">Connecting...</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('entities')">Live Entities</button>
+  <button class="tab" onclick="showTab('watched')">Watched</button>
+  <button class="tab" onclick="showTab('database')">Database</button>
+  <button class="tab" onclick="showTab('settings')">Radar Settings</button>
+  <button class="tab" onclick="showTab('landmarks')">Landmarks</button>
+</div>
+
+<!-- LIVE ENTITIES -->
+<div class="panel active" id="tab-entities">
+  <div class="search">
+    <input type="text" id="search" placeholder="Search metadata..." oninput="filterEntities()">
+    <label><input type="checkbox" id="aliveOnly" onchange="refresh()"> Alive only</label>
+    <span class="auto-refresh">Auto-refresh 2s</span>
+  </div>
+  <div class="filter-btns" id="catFilters"></div>
+  <div class="scrollbox"><table><thead>
+    <tr><th>Cat</th><th>Rarity</th><th>Metadata</th><th>HP</th><th>Dist</th><th></th></tr>
+  </thead><tbody id="entityBody"></tbody></table></div>
+</div>
+
+<!-- WATCHED -->
+<div class="panel" id="tab-watched">
+  <h2>Add Custom Watch</h2>
+  <div class="add-form">
+    <input type="text" id="addPattern" placeholder="Metadata pattern" style="width:220px">
+    <input type="text" id="addLabel" placeholder="Radar nickname" style="width:130px">
+    <input type="color" id="addColor" value="#ff5555">
+    <button class="btn btn-add" onclick="addWatched()">Add</button>
+  </div>
+  <p style="font-size:11px;color:#666;margin-bottom:8px">The nickname is displayed on the radar overlay next to the entity dot.</p>
+  <h2>Current Watched</h2>
+  <div id="watchedList"></div>
+</div>
+
+<!-- DATABASE -->
+<div class="panel" id="tab-database">
+  <div class="search">
+    <input type="text" id="dbSearch" placeholder="Search all game entities..." style="width:350px" oninput="filterDb()">
+    <span id="dbCount" class="count"></span>
+  </div>
+  <div class="filter-btns" id="dbCatFilters"></div>
+  <div class="scrollbox"><table><thead>
+    <tr><th>Category</th><th>Path</th><th></th></tr>
+  </thead><tbody id="dbBody"></tbody></table></div>
+</div>
+
+<!-- RADAR SETTINGS -->
+<div class="panel" id="tab-settings">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h2 style="margin:0">Radar Settings</h2>
+    <div><span class="saved" id="savedMsg">Saved!</span> <button class="btn btn-save" onclick="saveSettings()">Save</button></div>
+  </div>
+  <div id="settingsBody"></div>
+</div>
+
+<!-- LANDMARKS -->
+<div class="panel" id="tab-landmarks">
+  <div class="search"><input type="text" id="lmSearch" placeholder="Search landmarks..." style="width:300px" oninput="filterLandmarks()"></div>
+  <div class="scrollbox"><table><thead>
+    <tr><th>Name</th><th>Path</th><th>Tiles</th><th>Dist</th></tr>
+  </thead><tbody id="lmBody"></tbody></table></div>
+</div>
+
+<script>
+let entities=[],watched=[],landmarks=[],db=[],settings={},catFilter='',dbCatFilter='';
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  [...document.querySelectorAll('.tab')].find(t=>t.textContent.toLowerCase().includes(name.slice(0,4))||t.getAttribute('onclick')?.includes(name))?.classList.add('active');
+  $('tab-'+name).classList.add('active');
+  if(name==='watched')refreshWatched();
+  if(name==='landmarks')refreshLandmarks();
+  if(name==='database'&&db.length===0)loadDb();
+  if(name==='settings')loadSettings();
+}
+
+// ── LIVE ENTITIES ──
+async function refresh(){
+  try{
+    const s=await(await fetch('/state')).json();
+    $('status').innerHTML=s.inGame
+      ?`<span>${s.areaCode}</span> (lvl ${s.areaLevel}) | HP ${s.hpPct.toFixed(0)}% | Entities: ${s.entityCount}`
+      :'Waiting for in-game...';
+    const alive=$('aliveOnly').checked?'&alive=true':'';
+    entities=await(await fetch('/entities?limit=1000'+alive)).json();
+    renderEntities();
+  }catch(e){$('status').textContent='Connection lost';}
+}
+function renderEntities(){
+  const search=$('search').value.toLowerCase();
+  const cats=[...new Set(entities.map(e=>e.category))];
+  $('catFilters').innerHTML=['All',...cats].map(c=>
+    `<button class="filter-btn ${catFilter===(c==='All'?'':c)?'active':''}" onclick="setCat('${c==='All'?'':c}')">${c}</button>`).join('');
+  const f=entities.filter(e=>(!catFilter||e.category===catFilter)&&(!search||e.metadata.toLowerCase().includes(search)));
+  $('entityBody').innerHTML=f.map(e=>`<tr class="${e.watched?'watched':''}">
+    <td><span class="cat cat-${e.category}">${e.category}</span></td>
+    <td><span class="rarity-${e.rarity}">${e.rarity}</span></td>
+    <td class="meta-short" title="${e.metadata}">${e.metadata}</td>
+    <td>${e.hpMax>0?e.hpCur+'/'+e.hpMax:'-'}</td><td>${e.dist}</td>
+    <td>${e.watched?`<button class="btn btn-rm" onclick="rmByMeta('${esc(e.metadata)}')">Unwatch</button>`
+                    :`<button class="btn btn-add" onclick="quickWatch('${esc(e.metadata)}')">Watch</button>`}</td>
+  </tr>`).join('');
+}
+function setCat(c){catFilter=c;renderEntities();}
+function filterEntities(){renderEntities();}
+
+// ── WATCHED ──
+async function quickWatch(meta){
+  const parts=meta.split('/');const def=parts[parts.length-1].replace(/@\d+$/,'');
+  const nick=prompt('Nickname for radar:',def);if(nick===null)return;
+  await doAdd(meta,nick||def,$('addColor').value);
+}
+async function addWatched(){
+  const p=$('addPattern').value.trim(),l=$('addLabel').value.trim(),c=$('addColor').value;
+  if(!p)return;await doAdd(p,l||p.split('/').pop(),c);$('addPattern').value='';$('addLabel').value='';
+}
+async function doAdd(pattern,label,color){
+  await fetch('/api/watched',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern,label,color,enabled:true})});
+  refresh();refreshWatched();
+}
+async function rmByMeta(meta){const w=watched.find(w=>meta.includes(w.pattern));if(w)await rmWatched(w.pattern);}
+async function rmWatched(pattern){await fetch('/api/watched?pattern='+encodeURIComponent(pattern),{method:'DELETE'});refreshWatched();refresh();}
+async function refreshWatched(){
+  watched=await(await fetch('/api/watched')).json();
+  $('watchedList').innerHTML=watched.map(w=>
+    `<div class="watched-item"><div class="swatch" style="background:${w.color}"></div>
+    <div class="label">${w.label}</div><div class="pattern" title="${w.pattern}">${w.pattern}</div>
+    <button class="btn btn-rm" onclick="rmWatched('${esc(w.pattern)}')">Remove</button></div>`
+  ).join('')||'<div style="color:#666;padding:8px">No watched entities yet.</div>';
+}
+
+// ── DATABASE ──
+async function loadDb(){$('dbCount').textContent='Loading...';db=await(await fetch('/api/database')).json();$('dbCount').textContent=db.length+' entities';filterDb();}
+function filterDb(){
+  const s=($('dbSearch')?.value||'').toLowerCase();const cats=new Set();
+  const f=db.filter(p=>{if(s&&!p.toLowerCase().includes(s))return false;const c=getCat(p);cats.add(c);return!dbCatFilter||c===dbCatFilter;});
+  $('dbCatFilters').innerHTML=['All',...[...cats].sort()].map(c=>
+    `<button class="filter-btn ${dbCatFilter===(c==='All'?'':c)?'active':''}" onclick="setDbCat('${c==='All'?'':c}')">${c}</button>`).join('');
+  const show=f.slice(0,200);
+  $('dbBody').innerHTML=show.map(p=>{const isW=watched.some(w=>p.includes(w.pattern));
+    return`<tr class="${isW?'watched':''}"><td><span class="db-cat">${getCat(p)}</span></td>
+    <td class="db-path" title="${p}">${p}</td>
+    <td>${isW?`<button class="btn btn-rm" onclick="rmByMeta('${esc(p)}')">-</button>`
+             :`<button class="btn btn-add" onclick="dbWatch('${esc(p)}')">Watch</button>`}</td></tr>`;
+  }).join('')+(f.length>200?`<tr><td colspan=3 style="color:#666">Showing 200/${f.length}. Narrow search.</td></tr>`:'');
+  $('dbCount').textContent=f.length+' matches';
+}
+function setDbCat(c){dbCatFilter=c;filterDb();}
+function getCat(p){const parts=p.split('/');return parts.length>=2?parts[1]:'?';}
+async function dbWatch(path){const def=path.split('/').pop();const nick=prompt('Nickname for radar:',def);if(nick===null)return;await doAdd(path,nick||def,'#ff5555');filterDb();}
+
+// ── SETTINGS ──
+const settingsDef = [
+  {section:'Visibility',items:[
+    {key:'showMonsters',label:'Normal Monsters',type:'bool'},
+    {key:'showRareMonsters',label:'Rare Monsters',type:'bool'},
+    {key:'showUniqueMonsters',label:'Unique Monsters',type:'bool'},
+    {key:'showNpcs',label:'NPCs',type:'bool'},
+    {key:'showChests',label:'Chests',type:'bool'},
+    {key:'showTransitions',label:'Transitions',type:'bool'},
+    {key:'showPlayers',label:'Other Players',type:'bool'},
+    {key:'showLandmarks',label:'Landmarks',type:'bool'},
+    {key:'showNameplates',label:'HP Nameplates',type:'bool'},
+    {key:'showTerrain',label:'Terrain',type:'bool'},
+    {key:'showStatusBar',label:'Status Bar',type:'bool'},
+    {key:'showWatchedLabels',label:'Watched Labels',type:'bool'},
+  ]},
+  {section:'Dot Sizes',items:[
+    {key:'monsterDotSize',label:'Normal Monster',type:'num',min:1,max:30,step:0.5},
+    {key:'magicDotSize',label:'Magic Monster',type:'num',min:1,max:30,step:0.5},
+    {key:'rareDotSize',label:'Rare Monster',type:'num',min:1,max:30,step:0.5},
+    {key:'uniqueDotSize',label:'Unique Monster',type:'num',min:1,max:30,step:0.5},
+    {key:'npcDotSize',label:'NPC',type:'num',min:1,max:30,step:0.5},
+    {key:'chestDotSize',label:'Chest',type:'num',min:1,max:30,step:0.5},
+    {key:'transitionDotSize',label:'Transition',type:'num',min:1,max:30,step:0.5},
+    {key:'playerDotSize',label:'Player',type:'num',min:1,max:30,step:0.5},
+    {key:'watchedDotSize',label:'Watched Entity',type:'num',min:1,max:30,step:0.5},
+  ]},
+  {section:'Outline',items:[
+    {key:'dotOutlineWidth',label:'Dot Outline Width',type:'num',min:0,max:10,step:0.5},
+    {key:'dotOutlineColor',label:'Dot Outline Color',type:'color'},
+    {key:'landmarkOutlineWidth',label:'Landmark Outline Width',type:'num',min:0,max:10,step:0.5},
+  ]},
+  {section:'Font Sizes (no limit — scale up for 4K)',items:[
+    {key:'statusFontSize',label:'Status Bar',type:'num',min:6,max:72,step:1},
+    {key:'landmarkFontSize',label:'Landmarks',type:'num',min:6,max:72,step:1},
+    {key:'transitionFontSize',label:'Transitions',type:'num',min:6,max:72,step:1},
+    {key:'chestFontSize',label:'Chests',type:'num',min:6,max:72,step:1},
+    {key:'watchedFontSize',label:'Watched Labels',type:'num',min:6,max:72,step:1},
+    {key:'nameplateFontSize',label:'HP Nameplates',type:'num',min:6,max:72,step:1},
+  ]},
+  {section:'Colors',items:[
+    {key:'monsterColor',label:'Normal Monster',type:'color'},
+    {key:'magicColor',label:'Magic Monster',type:'color'},
+    {key:'rareColor',label:'Rare Monster',type:'color'},
+    {key:'uniqueColor',label:'Unique Monster',type:'color'},
+    {key:'npcColor',label:'NPC',type:'color'},
+    {key:'chestColor',label:'Chest',type:'color'},
+    {key:'transitionColor',label:'Transition',type:'color'},
+    {key:'playerColor',label:'Player',type:'color'},
+    {key:'landmarkColor',label:'Landmark',type:'color'},
+    {key:'watchedColor',label:'Watched Entity',type:'color'},
+  ]},
+  {section:'Terrain',items:[
+    {key:'terrainOpacity',label:'Opacity',type:'num',min:0,max:1,step:0.05},
+    {key:'terrainColor',label:'Color',type:'color'},
+  ]},
+  {section:'Calibration',items:[
+    {key:'offsetX',label:'Offset X',type:'num',min:-50,max:50,step:0.5},
+    {key:'offsetY',label:'Offset Y',type:'num',min:-50,max:50,step:0.5},
+    {key:'scaleMul',label:'Scale',type:'num',min:0.3,max:3,step:0.02},
+  ]},
+  {section:'Auto-Flask',items:[
+    {key:'hpThreshold',label:'HP Threshold %',type:'num',min:5,max:95,step:5},
+    {key:'manaThreshold',label:'Mana Threshold %',type:'num',min:5,max:95,step:5},
+  ]},
+];
+
+async function loadSettings(){
+  settings=await(await fetch('/api/settings')).json();
+  let html='';
+  for(const sec of settingsDef){
+    html+=`<div class="section"><h3>${sec.section}</h3>`;
+    for(const item of sec.items){
+      const v=settings[item.key]??'';
+      html+=`<div class="setting-row"><label>${item.label}</label>`;
+      if(item.type==='bool')
+        html+=`<input type="checkbox" ${v?'checked':''} onchange="setSetting('${item.key}',this.checked)">`;
+      else if(item.type==='color')
+        html+=`<input type="color" value="${v}" onchange="setSetting('${item.key}',this.value)">`;
+      else if(item.type==='num')
+        html+=`<input type="range" min="${item.min}" max="${item.max}" step="${item.step}" value="${v}"
+          oninput="setSetting('${item.key}',parseFloat(this.value));this.nextElementSibling.textContent=this.value">
+          <span class="val">${v}</span>`;
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  }
+  $('settingsBody').innerHTML=html;
+}
+function setSetting(key,val){settings[key]=val;}
+async function saveSettings(){
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
+  $('savedMsg').classList.add('show');setTimeout(()=>$('savedMsg').classList.remove('show'),1500);
+}
+
+// ── LANDMARKS ──
+async function refreshLandmarks(){landmarks=await(await fetch('/landmarks')).json();filterLandmarks();}
+function filterLandmarks(){
+  const s=($('lmSearch')?.value||'').toLowerCase();
+  $('lmBody').innerHTML=landmarks.filter(l=>!s||l.name.toLowerCase().includes(s)||l.path.toLowerCase().includes(s))
+    .map(l=>`<tr><td>${l.name}</td><td class="meta-short" title="${l.path}">${l.path}</td><td>${l.tiles}</td><td>${l.dist}</td></tr>`).join('');
+}
+
+refresh();refreshWatched();setInterval(refresh,2000);
+</script></body></html>
+""";
+}

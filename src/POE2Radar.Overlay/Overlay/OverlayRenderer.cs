@@ -29,6 +29,9 @@ public sealed class OverlayRenderer : IDisposable
     private static readonly Color4 ColOther   = new(0.70f, 0.70f, 0.70f, 0.60f);
     private static readonly Color4 ColText    = new(1f, 1f, 1f, 1f);
     private static readonly Color4 ColPanel   = new(0.05f, 0.05f, 0.05f, 0.78f);
+    private static readonly Color4 ColCheatOn  = new(0.30f, 1.00f, 0.30f, 1.00f);
+    private static readonly Color4 ColCheatOff = new(0.50f, 0.50f, 0.50f, 0.80f);
+    private static readonly Color4 ColCheatMiss = new(0.60f, 0.25f, 0.25f, 0.70f);
     private static readonly Color4 ColLandmark = new(0.95f, 0.35f, 0.95f, 1f); // magenta — static tile landmarks
 
     private readonly OverlayWindow _window;
@@ -39,7 +42,10 @@ public sealed class OverlayRenderer : IDisposable
 
     private ID2D1SolidColorBrush? _bPlayer, _bMonster, _bNpc, _bChest, _bTrans, _bObject, _bOther, _bText, _bPanel, _bLandmark;
     private ID2D1SolidColorBrush? _bMagic, _bRare, _bUnique;
+    private ID2D1SolidColorBrush? _bCheatOn, _bCheatOff, _bCheatMiss;
     private IDWriteTextFormat? _tf;
+    private IDWriteTextFormat? _tfLandmark, _tfTransition, _tfChest;
+    private float _lastLmFs, _lastTrFs, _lastChFs;
     private bool _ready;
 
     public OverlayRenderer(OverlayWindow window) { _window = window; }
@@ -61,8 +67,20 @@ public sealed class OverlayRenderer : IDisposable
         _bMagic   = rt.CreateSolidColorBrush(ColMagic);
         _bRare    = rt.CreateSolidColorBrush(ColRare);
         _bUnique  = rt.CreateSolidColorBrush(ColUnique);
-        _tf = _window.DWriteFactory.CreateTextFormat("Consolas", null, FontWeight.Normal, FontStyle.Normal, FontStretch.Normal, 12f, "en-us");
+        _bCheatOn  = rt.CreateSolidColorBrush(ColCheatOn);
+        _bCheatOff = rt.CreateSolidColorBrush(ColCheatOff);
+        _bCheatMiss = rt.CreateSolidColorBrush(ColCheatMiss);
+        _tf = _window.DWriteFactory.CreateTextFormat("Consolas", null, FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, 12f, "en-us");
         _ready = true;
+    }
+
+    private IDWriteTextFormat GetTextFormat(float size, ref IDWriteTextFormat? cached, ref float lastSize)
+    {
+        if (cached != null && Math.Abs(lastSize - size) < 0.1f) return cached;
+        cached?.Dispose();
+        cached = _window.DWriteFactory.CreateTextFormat("Consolas", null, FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us");
+        lastSize = size;
+        return cached;
     }
 
     public void Render(RenderContext ctx)
@@ -77,10 +95,11 @@ public sealed class OverlayRenderer : IDisposable
         {
             // Draw nothing unless PoE2 is the foreground window — so the overlay never shows
             // over other apps when you alt-tab. (The cleared frame above hides prior content.)
-            if (ctx.Active)
+            if (!ctx.OverlayVisible) { /* cleared frame = hidden */ }
+            else
             {
                 DrawStatus(rt, ctx);
-                if (ctx.InGame) DrawNameplates(rt, ctx);   // world-space HP bars over elite mobs
+                if (ctx.InGame && ctx.Radar?.ShowNameplates != false) DrawNameplates(rt, ctx);
                 if (ctx is { InGame: true, Map.IsVisible: true })
                     DrawMap(rt, ctx);
             }
@@ -101,14 +120,30 @@ public sealed class OverlayRenderer : IDisposable
             }
 
         var line = !ctx.InGame
-            ? "POE2Radar: waiting for in-game…"
-            : $"POE2Radar  {ctx.AreaCode} (lvl {ctx.CharLevel})  HP {ctx.HpPct:F0}%  MP {ctx.ManaPct:F0}%  "
-              + $"flask:{ctx.FlaskNote}  enemies:{enemies} (R{rares} U{uniques})"
-              + (ctx.Map.IsVisible
-                  ? $"  | map zoom={ctx.Map.Zoom:F2} scale={ctx.ScaleMul:F2} off=({ctx.OffsetX:F0},{ctx.OffsetY:F0})"
-                  : "");
+            ? "waiting for in-game..."
+            : $"{ctx.AreaCode}  HP {ctx.HpPct:F0}%  MP {ctx.ManaPct:F0}%  "
+              + $"flask:{ctx.FlaskNote}  enemies:{enemies} (R{rares} U{uniques})";
         rt.FillRectangle(new Vortice.RawRectF(6, 6, 6 + line.Length * 7.3f + 10, 26), _bPanel!);
         rt.DrawText(line, _tf!, new Rect(12, 8, 1200, 22), _bText!, DrawTextOptions.Clip);
+
+        if (ctx.CheatStatus is { Count: > 0 } cheats)
+        {
+            var cx = 12f;
+            const float cy = 30f;
+            var label = "cheats: ";
+            rt.FillRectangle(new Vortice.RawRectF(6, 28, 500, 48), _bPanel!);
+            rt.DrawText(label, _tf!, new Rect(cx, cy, cx + 200, cy + 14), _bText!, DrawTextOptions.Clip);
+            cx += label.Length * 7.3f;
+
+            foreach (var (_, info) in cheats)
+            {
+                var tag = info.Active ? "ON" : info.Found ? "off" : "--";
+                var brush = info.Active ? _bCheatOn! : info.Found ? _bCheatOff! : _bCheatMiss!;
+                var text = $"{info.ShortName}[{tag}] ";
+                rt.DrawText(text, _tf!, new Rect(cx, cy, cx + 200, cy + 14), brush, DrawTextOptions.Clip);
+                cx += text.Length * 7.3f;
+            }
+        }
     }
 
     /// <summary>
@@ -247,47 +282,82 @@ public sealed class OverlayRenderer : IDisposable
         // clutter; the API still serves them for troubleshooting. Game-flagged POIs (entities
         // with a MinimapIcon component) always draw with a white ring, even if their category
         // would otherwise be filtered (waypoints, checkpoints, shrines, …).
+        var rs = ctx.Radar;
         foreach (var e in ctx.Entities)
         {
             ID2D1SolidColorBrush brush; float r; Icon icon;
             switch (e.Category)
             {
                 case Poe2Live.EntityCategory.Monster:
-                    if (!e.IsAlive) continue;            // skip corpses
-                    (brush, r, icon) = e.Rarity switch    // distinct shape + color by rarity
+                    if (!e.IsAlive) continue;
+                    (brush, r, icon) = e.Rarity switch
                     {
-                        Poe2Live.Rarity.Unique => (_bUnique!, 6.5f, Icon.Star),
-                        Poe2Live.Rarity.Rare   => (_bRare!, 5.5f, Icon.Triangle),
-                        Poe2Live.Rarity.Magic  => (_bMagic!, 3.4f, Icon.Diamond),
-                        _                      => (_bMonster!, 2.6f, Icon.Circle),
+                        Poe2Live.Rarity.Unique when rs?.ShowUniqueMonsters != false => (_bUnique!, rs?.UniqueDotSize ?? 6.5f, Icon.Star),
+                        Poe2Live.Rarity.Rare when rs?.ShowRareMonsters != false     => (_bRare!, rs?.RareDotSize ?? 5.5f, Icon.Triangle),
+                        Poe2Live.Rarity.Magic when rs?.ShowMonsters != false        => (_bMagic!, rs?.MagicDotSize ?? 3.4f, Icon.Diamond),
+                        _ when rs?.ShowMonsters != false                            => (_bMonster!, rs?.MonsterDotSize ?? 2.6f, Icon.Circle),
+                        _ => default,
                     };
+                    if (brush == null!) continue;
                     break;
-                case Poe2Live.EntityCategory.Player:     (brush, r, icon) = (_bPlayer!, 3.0f, Icon.Circle); break;
-                case Poe2Live.EntityCategory.Npc:        (brush, r, icon) = (_bNpc!, 4.0f, Icon.Plus); break;
+                case Poe2Live.EntityCategory.Player:
+                    if (rs?.ShowPlayers == false) continue;
+                    (brush, r, icon) = (_bPlayer!, 3.0f, Icon.Circle); break;
+                case Poe2Live.EntityCategory.Npc:
+                    if (rs?.ShowNpcs == false) continue;
+                    (brush, r, icon) = (_bNpc!, rs?.NpcDotSize ?? 4.0f, Icon.Plus); break;
                 case Poe2Live.EntityCategory.Chest:
-                    if (e.Opened) continue;                                   // skip used chests
-                    if (e.Rarity is not (Poe2Live.Rarity.Rare or Poe2Live.Rarity.Unique)) continue; // rare+ only
-                    (brush, r, icon) = (e.Rarity == Poe2Live.Rarity.Unique ? _bUnique! : _bRare!, 5.0f, Icon.Square);
+                    if (rs?.ShowChests == false) continue;
+                    if (e.Opened) continue;
+                    if (e.Rarity is not (Poe2Live.Rarity.Rare or Poe2Live.Rarity.Unique)) continue;
+                    (brush, r, icon) = (e.Rarity == Poe2Live.Rarity.Unique ? _bUnique! : _bRare!, rs?.ChestDotSize ?? 5.0f, Icon.Square);
                     break;
-                case Poe2Live.EntityCategory.Transition: (brush, r, icon) = (_bTrans!, 4.5f, Icon.Diamond); break;
+                case Poe2Live.EntityCategory.Transition:
+                    if (rs?.ShowTransitions == false) continue;
+                    (brush, r, icon) = (_bTrans!, rs?.TransitionDotSize ?? 4.5f, Icon.Diamond); break;
                 default:
-                    if (!e.Poi) continue;                // Object/Other → skip unless a POI
+                    if (!e.Poi) continue;
                     (brush, r, icon) = (_bObject!, 3.0f, Icon.Circle); break;
             }
             var p = Project(new NumVec2(e.Grid.X, e.Grid.Y), player, center, scale);
             DrawIcon(rt, icon, p, r, brush, filled: true);
+
+            // Watched entity labels (nickname)
+            var watchMatch = ctx.Watched?.Match(e.Metadata);
+            if (watchMatch != null)
+            {
+                rt.FillEllipse(new Ellipse(p, r + 3, r + 3), _bText!);
+                DrawIcon(rt, icon, p, r, brush, filled: true);
+                rt.DrawText(watchMatch.Label, _tf!, new Rect(p.X + r + 4, p.Y - 7, p.X + 250, p.Y + 9), _bText!);
+            }
+            else if (e.Category == Poe2Live.EntityCategory.Transition && rs?.ShowTransitions != false)
+            {
+                var trFs = rs?.TransitionFontSize ?? 12f;
+                var trTf = GetTextFormat(trFs, ref _tfTransition, ref _lastTrFs);
+                rt.DrawText(e.Metadata.Split('/')[^1], trTf, new Rect(p.X + r + 3, p.Y - trFs / 2, p.X + 250, p.Y + trFs), _bTrans!);
+            }
+            else if (e.Category == Poe2Live.EntityCategory.Chest && rs?.ShowChests != false)
+            {
+                var chFs = rs?.ChestFontSize ?? 12f;
+                var chTf = GetTextFormat(chFs, ref _tfChest, ref _lastChFs);
+                var tag = e.Rarity == Poe2Live.Rarity.Unique ? "[U]" : "[R]";
+                rt.DrawText(tag, chTf, new Rect(p.X + r + 3, p.Y - chFs / 2, p.X + 100, p.Y + chFs), brush);
+            }
         }
 
-        // Static tile landmarks (boss arena, treasure, …) — diamond + label at the group centroid.
+        if (rs?.ShowLandmarks == false) goto skipLandmarks;
+        var lmFs = rs?.LandmarkFontSize ?? 12f;
+        var lmTf = GetTextFormat(lmFs, ref _tfLandmark, ref _lastLmFs);
         foreach (var lm in ctx.Landmarks)
         {
             var p = Project(new NumVec2(lm.Center.X, lm.Center.Y), player, center, scale);
             var d = 5f;
             var diamond = new[] { new NumVec2(p.X, p.Y - d), new NumVec2(p.X + d, p.Y), new NumVec2(p.X, p.Y + d), new NumVec2(p.X - d, p.Y) };
             for (var i = 0; i < 4; i++) rt.DrawLine(diamond[i], diamond[(i + 1) % 4], _bLandmark!, 1.6f);
-            rt.DrawText(lm.Name, _tf!, new Rect(p.X + 7, p.Y - 7, p.X + 240, p.Y + 9), _bLandmark!, DrawTextOptions.Clip);
+            rt.DrawText(lm.Name, lmTf, new Rect(p.X + 7, p.Y - lmFs / 2, p.X + 300, p.Y + lmFs), _bLandmark!);
         }
 
+        skipLandmarks:
         // Player blip on top.
         rt.FillEllipse(new Ellipse(center, 5f, 5f), _bPlayer!);
     }
@@ -304,8 +374,9 @@ public sealed class OverlayRenderer : IDisposable
         _bPlayer?.Dispose(); _bMonster?.Dispose(); _bNpc?.Dispose(); _bChest?.Dispose();
         _bTrans?.Dispose(); _bObject?.Dispose(); _bOther?.Dispose(); _bText?.Dispose(); _bPanel?.Dispose(); _bLandmark?.Dispose();
         _bMagic?.Dispose(); _bRare?.Dispose(); _bUnique?.Dispose();
+        _bCheatOn?.Dispose(); _bCheatOff?.Dispose(); _bCheatMiss?.Dispose();
         _geoTriangle?.Dispose(); _geoStar?.Dispose(); _geoDiamond?.Dispose(); _geoPlus?.Dispose();
-        _tf?.Dispose();
+        _tf?.Dispose(); _tfLandmark?.Dispose(); _tfTransition?.Dispose(); _tfChest?.Dispose();
         _terrain?.Dispose();
     }
 }
