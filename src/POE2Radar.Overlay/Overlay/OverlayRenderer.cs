@@ -352,6 +352,7 @@ public sealed class OverlayRenderer : IDisposable
         if (rs?.ShowLandmarks == false) goto skipLandmarks;
         var lmFs = rs?.LandmarkFontSize ?? 12f;
         var lmTf = GetTextFormat(lmFs, ref _tfLandmark, ref _lastLmFs);
+        ctx.LandmarkScreenPositions?.Clear();
         foreach (var lm in ctx.Landmarks)
         {
             var p = Project(new NumVec2(lm.Center.X, lm.Center.Y), player, center, scale);
@@ -359,6 +360,7 @@ public sealed class OverlayRenderer : IDisposable
             var diamond = new[] { new NumVec2(p.X, p.Y - d), new NumVec2(p.X + d, p.Y), new NumVec2(p.X, p.Y + d), new NumVec2(p.X - d, p.Y) };
             for (var i = 0; i < 4; i++) rt.DrawLine(diamond[i], diamond[(i + 1) % 4], _bLandmark!, 1.6f);
             rt.DrawText(lm.Name, lmTf, new Rect(p.X + 7, p.Y - lmFs / 2, p.X + 300, p.Y + lmFs), _bLandmark!);
+            ctx.LandmarkScreenPositions?.Add((p.X, p.Y, lm.Center.X, lm.Center.Y, lm.Name));
         }
 
         skipLandmarks:

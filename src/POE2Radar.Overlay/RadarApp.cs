@@ -44,7 +44,9 @@ public sealed class RadarApp : IDisposable
     private NumVec2 _lastPathPlayerGrid;
     private string _lastPathTarget = "";
     private string? _manualPathPattern;
+    private (int X, int Y)? _manualPathGridTarget;
     private readonly List<(float ScreenX, float ScreenY, string Metadata)> _entityScreenPos = new();
+    private readonly List<(float ScreenX, float ScreenY, float GridX, float GridY, string Name)> _landmarkScreenPos = new();
 
     private const int LifeVk = 0x31, ManaVk = 0x32;
     private static readonly TimeSpan LifeCooldown = TimeSpan.FromMilliseconds(2500);
@@ -170,7 +172,8 @@ public sealed class RadarApp : IDisposable
             OverlayVisible: _overlayVisible,
             Watched: _watched,
             PathPoints: _pathPoints,
-            EntityScreenPositions: _entityScreenPos);
+            EntityScreenPositions: _entityScreenPos,
+            LandmarkScreenPositions: _landmarkScreenPos);
         _renderer.Render(ctx);
     }
 
@@ -256,10 +259,36 @@ public sealed class RadarApp : IDisposable
 
         var cx = _window.ClickX;
         var cy = _window.ClickY;
+        var bestDist = 25f * 25f;
 
-        // Find nearest entity to click position
+        // Check landmarks first (larger click target since they have text labels)
+        string? bestLandmark = null;
+        float bestLmGx = 0, bestLmGy = 0;
+        foreach (var (sx, sy, gx, gy, name) in _landmarkScreenPos)
+        {
+            // Hit test the label area (diamond + text extends ~200px to the right)
+            var dx = cx - sx;
+            var dy = cy - sy;
+            if (dx >= -10 && dx <= 200 && dy >= -15 && dy <= 15)
+            {
+                var d2 = dx * dx + dy * dy;
+                if (d2 < bestDist) { bestDist = d2; bestLandmark = name; bestLmGx = gx; bestLmGy = gy; }
+            }
+        }
+
+        if (bestLandmark != null)
+        {
+            _manualPathPattern = null;
+            _manualPathGridTarget = ((int)bestLmGx, (int)bestLmGy);
+            _pathPoints = null;
+            _lastPathTarget = "";
+            Console.WriteLine($"\nAlt+click nav to landmark: {bestLandmark}");
+            return;
+        }
+
+        // Check entities
         string? bestMeta = null;
-        var bestDist = 20f * 20f; // 20px radius squared
+        bestDist = 20f * 20f;
         foreach (var (sx, sy, meta) in _entityScreenPos)
         {
             var dx = sx - cx;
@@ -272,6 +301,7 @@ public sealed class RadarApp : IDisposable
         {
             var shortName = bestMeta.Split('/')[^1].Split('@')[0];
             _manualPathPattern = shortName;
+            _manualPathGridTarget = null;
             _pathPoints = null;
             _lastPathTarget = "";
             Console.WriteLine($"\nAlt+click nav: {shortName}");
@@ -280,50 +310,63 @@ public sealed class RadarApp : IDisposable
 
     private void UpdatePath(NumVec2 playerGrid)
     {
-        if (!_radarSettings.ShowPath || _terrain == null || _pathing.All.Count == 0)
+        if (!_radarSettings.ShowPath || _terrain == null)
         {
             _pathPoints = null;
             return;
         }
 
-        string? targetPattern;
-        if (_manualPathPattern != null)
+        int destX, destY;
+        string cacheKey;
+
+        if (_manualPathGridTarget is { } gridTarget)
         {
-            targetPattern = _manualPathPattern;
+            destX = gridTarget.X;
+            destY = gridTarget.Y;
+            cacheKey = $"grid:{destX},{destY}";
         }
         else
         {
-            var entityInfo = _entities
-                .Select(e => (e.Metadata, Distance: (e.Grid - playerGrid).Length(), e.IsAlive))
-                .ToList();
-            targetPattern = _pathing.FindNearestPattern(entityInfo!);
+            string? targetPattern;
+            if (_manualPathPattern != null)
+                targetPattern = _manualPathPattern;
+            else
+            {
+                if (_pathing.All.Count == 0) { _pathPoints = null; return; }
+                var entityInfo = _entities
+                    .Select(e => (e.Metadata, Distance: (e.Grid - playerGrid).Length(), e.IsAlive))
+                    .ToList();
+                targetPattern = _pathing.FindNearestPattern(entityInfo!);
+            }
+
+            if (targetPattern == null) { _pathPoints = null; return; }
+
+            Poe2Live.EntityDot? closest = null;
+            var closestDist = float.MaxValue;
+            foreach (var e in _entities)
+            {
+                if (!e.IsAlive && e.HpMax > 0) continue;
+                if (!e.Metadata.Contains(targetPattern, StringComparison.OrdinalIgnoreCase)) continue;
+                var d = (e.Grid - playerGrid).Length();
+                if (d < closestDist) { closestDist = d; closest = e; }
+            }
+
+            if (closest == null) { _pathPoints = null; return; }
+            destX = (int)closest.Value.Grid.X;
+            destY = (int)closest.Value.Grid.Y;
+            cacheKey = targetPattern;
         }
 
-        if (targetPattern == null) { _pathPoints = null; return; }
-
         var playerMoved = (playerGrid - _lastPathPlayerGrid).Length() > 3f;
-        var targetChanged = targetPattern != _lastPathTarget;
+        var targetChanged = cacheKey != _lastPathTarget;
         if (!playerMoved && !targetChanged && _pathPoints != null) return;
 
         _lastPathPlayerGrid = playerGrid;
-        _lastPathTarget = targetPattern;
-
-        Poe2Live.EntityDot? closest = null;
-        var closestDist = float.MaxValue;
-        foreach (var e in _entities)
-        {
-            if (!e.IsAlive && e.HpMax > 0) continue;
-            if (!e.Metadata.Contains(targetPattern, StringComparison.OrdinalIgnoreCase)) continue;
-            var d = (e.Grid - playerGrid).Length();
-            if (d < closestDist) { closestDist = d; closest = e; }
-        }
-
-        if (closest == null) { _pathPoints = null; return; }
+        _lastPathTarget = cacheKey;
 
         var t = _terrain;
         var result = AStarPathfinder.FindPath(t.Walkable, t.Width, t.Height,
-            (int)playerGrid.X, (int)playerGrid.Y,
-            (int)closest.Value.Grid.X, (int)closest.Value.Grid.Y);
+            (int)playerGrid.X, (int)playerGrid.Y, destX, destY);
         _pathPoints = result != null ? AStarPathfinder.Simplify(result.Value.Points) : null;
     }
 
