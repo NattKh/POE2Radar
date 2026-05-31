@@ -108,6 +108,7 @@ tr.watched{background:#2a3a2a}
 <div class="panel" id="tab-database">
   <div class="search">
     <input type="text" id="dbSearch" placeholder="Search all game entities..." style="width:350px" oninput="filterDb()">
+    <label style="font-size:12px;color:#aaa"><input type="checkbox" id="dbHideJunk" checked onchange="filterDb()"> Hide junk</label>
     <span id="dbCount" class="count"></span>
   </div>
   <div class="filter-btns" id="dbCatFilters"></div>
@@ -260,10 +261,13 @@ async function importWatched(input){
 }
 
 // ── DATABASE ──
+const JUNK_PATTERNS=['/attachments','monstermods','microtransactions','/timelines/','stashskins','/fx/','/mat/','/ao/','/epk/','/graph/','/audio/','/pet/','/clone/','playersummoned','essencemoddaemons','tormentedspirits','/daemon/','bossroomminimapicon','/environment/','hairstyles','/outfits/','/runemarked'];
+function isJunk(p){const l=p.toLowerCase();return JUNK_PATTERNS.some(j=>l.includes(j));}
+
 async function loadDb(){$('dbCount').textContent='Loading...';db=await(await fetch('/api/database')).json();$('dbCount').textContent=db.length+' entities';filterDb();}
 function filterDb(){
-  const s=($('dbSearch')?.value||'').toLowerCase();const cats=new Set();
-  const f=db.filter(p=>{if(s&&!p.toLowerCase().includes(s))return false;const c=getCat(p);cats.add(c);return!dbCatFilter||c===dbCatFilter;});
+  const s=($('dbSearch')?.value||'').toLowerCase();const cats=new Set();const hj=$('dbHideJunk')?.checked;
+  const f=db.filter(p=>{if(hj&&isJunk(p))return false;if(s&&!p.toLowerCase().includes(s))return false;const c=getCat(p);cats.add(c);return!dbCatFilter||c===dbCatFilter;});
   $('dbCatFilters').innerHTML=['All',...[...cats].sort()].map(c=>
     `<button class="filter-btn ${dbCatFilter===(c==='All'?'':c)?'active':''}" onclick="setDbCat('${c==='All'?'':c}')">${c}</button>`).join('');
   const show=f.slice(0,200);
@@ -339,6 +343,9 @@ const settingsDef = [
     {key:'offsetX',label:'Offset X',type:'num',min:-50,max:50,step:0.5},
     {key:'offsetY',label:'Offset Y',type:'num',min:-50,max:50,step:0.5},
     {key:'scaleMul',label:'Scale',type:'num',min:0.3,max:3,step:0.02},
+  ]},
+  {section:'Junk Filter',items:[
+    {key:'hideJunkEntities',label:'Hide Junk (attachments, mods, fx, cosmetics)',type:'bool'},
   ]},
   {section:'Pathfinding',items:[
     {key:'showPath',label:'Enable Pathfinding',type:'bool'},

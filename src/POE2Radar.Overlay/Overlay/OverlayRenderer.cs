@@ -1,5 +1,6 @@
 using System.Numerics;
 using POE2Radar.Core.Game;
+using static POE2Radar.Core.Game.JunkFilter;
 using POE2Radar.Core.Pathfinding;
 using Vortice.Direct2D1;
 using Vortice.DirectWrite;
@@ -283,9 +284,11 @@ public sealed class OverlayRenderer : IDisposable
         // with a MinimapIcon component) always draw with a white ring, even if their category
         // would otherwise be filtered (waypoints, checkpoints, shrines, …).
         var rs = ctx.Radar;
+        var hideJunk = rs?.HideJunkEntities ?? true;
         ctx.EntityScreenPositions?.Clear();
         foreach (var e in ctx.Entities)
         {
+            if (hideJunk && JunkFilter.IsJunk(e.Metadata)) continue;
             ID2D1SolidColorBrush brush; float r; Icon icon;
             switch (e.Category)
             {
