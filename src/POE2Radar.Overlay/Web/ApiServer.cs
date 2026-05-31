@@ -157,6 +157,41 @@ public sealed class ApiServer : IDisposable
                 break;
             }
 
+            case "/api/watched/export":
+            {
+                var json = JsonSerializer.Serialize(_watched.All.Values.ToList(), Json);
+                ctx.Response.AddHeader("Content-Disposition", "attachment; filename=watched_entities.json");
+                TryWrite(ctx, 200, "application/json", json);
+                break;
+            }
+
+            case "/api/watched/import":
+            {
+                if (method == "POST")
+                {
+                    var body = ReadBody(ctx);
+                    try
+                    {
+                        var list = JsonSerializer.Deserialize<List<WatchedEntry>>(body, Json);
+                        var added = 0;
+                        if (list != null)
+                        {
+                            foreach (var e in list)
+                            {
+                                if (!string.IsNullOrEmpty(e.Pattern))
+                                {
+                                    _watched.Add(e.Pattern, e.Label ?? e.Pattern.Split('/')[^1], e.Color ?? "#ff5555");
+                                    added++;
+                                }
+                            }
+                        }
+                        WriteJson(ctx, new { ok = true, imported = added, total = _watched.All.Count });
+                    }
+                    catch (Exception ex) { WriteJson(ctx, new { error = ex.Message }, 400); }
+                }
+                break;
+            }
+
             case "/api/database":
             {
                 WriteJson(ctx, LoadEntityDatabase());

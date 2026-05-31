@@ -93,7 +93,13 @@ tr.watched{background:#2a3a2a}
     <button class="btn btn-add" onclick="addWatched()">Add</button>
   </div>
   <p style="font-size:11px;color:#666;margin-bottom:8px">The nickname is displayed on the radar overlay next to the entity dot.</p>
-  <h2>Current Watched</h2>
+  <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+    <h2 style="margin:0">Current Watched</h2>
+    <button class="btn btn-save" onclick="exportWatched()" style="margin-left:auto">Export JSON</button>
+    <button class="btn btn-add" onclick="$('importFile').click()">Import JSON</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importWatched(this)">
+    <span class="saved" id="importMsg">Imported!</span>
+  </div>
   <div id="watchedList"></div>
 </div>
 
@@ -195,6 +201,23 @@ async function refreshWatched(){
     <div class="label">${w.label}</div><div class="pattern" title="${w.pattern}">${w.pattern}</div>
     <button class="btn btn-rm" onclick="rmWatched('${esc(w.pattern)}')">Remove</button></div>`
   ).join('')||'<div style="color:#666;padding:8px">No watched entities yet.</div>';
+}
+function exportWatched(){
+  const blob=new Blob([JSON.stringify(watched,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='watched_entities.json';a.click();URL.revokeObjectURL(a.href);
+}
+async function importWatched(input){
+  if(!input.files[0])return;
+  const text=await input.files[0].text();
+  try{
+    const r=await fetch('/api/watched/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text});
+    const res=await r.json();
+    if(res.ok){$('importMsg').textContent=`Imported ${res.imported} entries!`;$('importMsg').classList.add('show');setTimeout(()=>$('importMsg').classList.remove('show'),2000);}
+    else alert('Import error: '+res.error);
+    refreshWatched();refresh();
+  }catch(e){alert('Invalid JSON file');}
+  input.value='';
 }
 
 // ── DATABASE ──

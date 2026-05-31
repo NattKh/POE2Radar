@@ -1,0 +1,14 @@
+[
+  {
+    "pattern": "Metadata/MiscellaneousObjects/Checkpoint",
+    "label": "Checkpoint",
+    "color": "#ff5555",
+    "enabled": true
+  },
+  {
+    "pattern": "Metadata/MiscellaneousObjects/AreaTransition_Animate",
+    "label": "Area Portal",
+    "color": "#ff5555",
+    "enabled": true
+  }
+]

@@ -36,7 +36,7 @@ A full browser-based control panel served on localhost.
 | Tab | Description |
 |-----|-------------|
 | **Live Entities** | Real-time list of every entity in your zone. Filter by category, search by metadata path, toggle alive-only. Click "Watch" to add to watchlist with a custom nickname. |
-| **Watched List** | All watched entity patterns with nicknames. Add custom patterns, remove entries. Persists to `config/watched_entities.json`. |
+| **Watched List** | All watched entity patterns with nicknames. Add custom patterns, remove entries. **Import/Export JSON** to share watchlists with others. Persists to `config/watched_entities.json`. |
 | **Entity Database** | 6,692 entity paths extracted from the GGPK. Search, filter by category (Monsters, Chests, NPC, etc.), and add to watchlist directly. |
 | **Radar Settings** | Full visual customization with no artificial limits. Includes: visibility toggles, dot sizes, outline width/color, font sizes (up to 72 for 4K), all entity colors, terrain opacity, map calibration, flask thresholds. Saves to `config/radar_settings.json`. |
 | **Landmarks** | Browse all terrain tile landmarks in the current zone with paths and distances. |
@@ -54,12 +54,17 @@ A full browser-based control panel served on localhost.
 - Character name hidden from overlay and API
 - No branding in any visible UI element
 
+### Watchlist Sharing
+- **Export** your watched entities as a JSON file from the web dashboard
+- **Import** a JSON file to merge entries into your watchlist
+- Share watchlists with friends — they import and get all your nicknames + patterns instantly
+
 ### Settings Persistence
 All configuration saves to the `config/` directory next to the executable:
-- `radar_settings.json` — all visual/radar settings
+- `radar_settings.json` — all visual/radar settings (colors, sizes, fonts, visibility, calibration, flask thresholds)
 - `watched_entities.json` — entity watchlist with nicknames
 
-Settings survive restarts and can be hand-edited.
+Everything auto-loads on startup and auto-saves on change.
 
 ---
 
