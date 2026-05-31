@@ -1,79 +1,117 @@
 # POE2Radar
 
-An external, mostly read-only **map/radar overlay for Path of Exile 2**.
+An external map/radar overlay for Path of Exile 2 with built-in cheats, a web dashboard, and full customization.
 
-It attaches to the PoE2 client, reads game state directly out of process memory (no injection, no
-hooks), and draws a terrain + entity overlay on top of the game's map — plus an optional auto-flask
-quality-of-life feature.
+Attaches to the PoE2 client, reads game state out of process memory (no injection, no hooks), draws a terrain + entity overlay, and optionally patches game constants for quality-of-life tweaks.
 
-> ⚠️ **Use at your own risk.** This reads another process's memory and can send keystrokes to the
-> game. Automating input may violate Path of Exile's Terms of Service and could put your account at
-> risk. This is a personal/educational tool — you are responsible for how you use it.
+> **Use at your own risk.** This reads another process's memory, patches game instructions, and can send keystrokes. This may violate Path of Exile's Terms of Service and could put your account at risk.
+
+---
 
 ## Features
 
-- **Map overlay** — when the in-game map is open, draws the walkable-terrain mask + entity dots,
-  projected player-centered onto the game's map.
-- **Entity radar** — alive enemies (red), NPCs, chests, area transitions, other players, and
-  **POIs** (anything the game flags with a minimap icon) shown with a ring.
-- **Tile landmarks** — static features pulled from terrain tile data (boss arena, treasure, …),
-  shown the moment you enter an area, before exploring.
-- **Auto-flask** (opt-in input) — presses the life/mana flask key below a HP/mana threshold.
-  Hard-gated: only when PoE2 is the foreground window, with cooldowns and an **F8 kill-switch**.
-- **Live state API** — a small HTTP server (`localhost:7777`) for troubleshooting:
-  `GET /state`, `GET /entities` (filters: `category`, `alive`, `radius`, `limit`), `GET /landmarks`.
+### Radar Overlay
+- **Terrain map** — walkable grid rendered as a bitmap on the in-game map
+- **Entity dots** — monsters, NPCs, chests, transitions, other players, POIs
+- **Rarity shapes** — Normal (circle), Magic (diamond), Rare (triangle), Unique (star)
+- **HP nameplates** — world-space health bars over Magic/Rare/Unique monsters
+- **Tile landmarks** — static features from terrain data (boss arenas, treasure, waypoints) shown immediately on area entry
+- **Custom landmarks** — community-contributed tile labels with boss names, rewards, and directions (embedded JSON, 450+ entries across all acts)
+- **Watched entity labels** — add any entity to a watchlist with a custom nickname that renders on the overlay
 
-## Download (no build required)
+### Cheats (Byte Patching)
+All cheats use AOB pattern scanning + `WriteProcessMemory`. Original bytes are saved and restored on exit.
 
-Grab the latest **`POE2Radar-vX.Y.Z-win-x64.zip`** from the
-[Releases page](https://github.com/Sikaka/POE2Radar/releases), unzip, and run `POE2Radar.Overlay.exe`
-**as Administrator** (reading another process's memory requires it) with PoE2 already running.
-The build is self-contained — no .NET install needed.
+| Hotkey | Cheat | Description |
+|--------|-------|-------------|
+| F1 | No Atlas Fog | Removes fog of war from the atlas |
+| F2 | Reveal Map | Reveals the full minimap |
+| F3 | Infinite Zoom | Removes the zoom clamp (zoom out further) |
+| F4 | Enemy HP Bars | Forces all enemy health bars visible |
+| F5 | Player Light | Adjustable light radius (slider, default 2000, up to 50000) |
 
-Notes:
-- Windows SmartScreen may warn about an unsigned exe (expected for a community tool) — "More info →
-  Run anyway".
-- Antivirus may flag it because it reads game memory and (optionally) sends keystrokes; that's
-  inherent to what the tool does.
+### Web Dashboard (`http://localhost:7777` or F11)
+A full browser-based control panel served on localhost.
 
-## Build from source
+| Tab | Description |
+|-----|-------------|
+| **Live Entities** | Real-time list of every entity in your zone. Filter by category, search by metadata path, toggle alive-only. Click "Watch" to add to watchlist with a custom nickname. |
+| **Watched List** | All watched entity patterns with nicknames. Add custom patterns, remove entries. Persists to `config/watched_entities.json`. |
+| **Entity Database** | 6,692 entity paths extracted from the GGPK. Search, filter by category (Monsters, Chests, NPC, etc.), and add to watchlist directly. |
+| **Radar Settings** | Full visual customization with no artificial limits. Includes: visibility toggles, dot sizes, outline width/color, font sizes (up to 72 for 4K), all entity colors, terrain opacity, map calibration, flask thresholds. Saves to `config/radar_settings.json`. |
+| **Landmarks** | Browse all terrain tile landmarks in the current zone with paths and distances. |
 
-Requires the **.NET 10 SDK**, Windows x64.
+### Auto-Flask
+- Sends flask keystrokes when HP or Mana drops below configurable thresholds
+- Foreground-gated (only when PoE2 is focused), per-flask cooldowns
+- F8 master kill-switch
+- Thresholds adjustable via web dashboard
+
+### Anti-Detection
+- Executable launches as a random-named hardlink (e.g. `Tocufe.exe`)
+- Overlay window class and title are randomized
+- No "POE2Radar" strings in the binary
+- Character name hidden from overlay and API
+- No branding in any visible UI element
+
+### Settings Persistence
+All configuration saves to the `config/` directory next to the executable:
+- `radar_settings.json` — all visual/radar settings
+- `watched_entities.json` — entity watchlist with nicknames
+
+Settings survive restarts and can be hand-edited.
+
+---
+
+## Hotkeys
+
+| Key | Action |
+|-----|--------|
+| F1 | Toggle No Atlas Fog |
+| F2 | Toggle Reveal Map |
+| F3 | Toggle Infinite Zoom |
+| F4 | Toggle Enemy HP Bars |
+| F5 | Toggle Player Light (slider in F9 window) |
+| F8 | Toggle Auto-Flask on/off |
+| F9 | Open/close WinForms settings window (cheats + light slider) |
+| F10 | Toggle overlay visibility |
+| F11 | Open web dashboard in browser |
+| PageUp/Down | Adjust map scale |
+| Arrow Keys | Adjust map offset |
+| Home | Reset calibration |
+| Ctrl+C | Exit (restores all patched bytes) |
+
+---
+
+## Building
+
+Requires .NET 10 SDK, Windows, x64.
 
 ```
-dotnet build POE2Radar.slnx
-# launch with PoE2 already running and you in a zone:
-src\POE2Radar.Overlay\bin\Debug\net10.0-windows\POE2Radar.Overlay.exe
+dotnet publish src/POE2Radar.Overlay/POE2Radar.Overlay.csproj -c Release -r win-x64 --self-contained
 ```
 
-Reading another process generally requires running the overlay **as Administrator**.
+Output: `Overlay.exe` (self-contained, no runtime needed).
 
-Hotkeys: **F8** toggles auto-flask; **PageUp/PageDown** scale and **arrow keys** offset the map
-projection (for calibration); **Home** resets.
+## Running
+
+1. Start Path of Exile 2
+2. Run `Overlay.exe` as administrator
+3. Open the in-game map to see the radar overlay
+4. Press F11 to open the web dashboard for full customization
+
+---
 
 ## Architecture
 
-Three projects:
-
-- `src/POE2Radar.Core` — memory plumbing (`OpenProcess` + `ReadProcessMemory`), the PoE2 offset
-  table (`Game/Poe2Offsets.cs`), and the live read layer (`Game/Poe2Live.cs`).
-- `src/POE2Radar.Overlay` — the radar `.exe`: attaches, AOB-resolves the game roots, runs the tick
-  loop, renders the Direct2D overlay, serves the API, and (opt-in) drives auto-flask input.
-- `src/POE2Radar.Research` — dev-time offset discovery/validation tools (AOB scan, HP value-scan,
-  entity/tile/UI probes, an area-change watcher). Never linked into the overlay binary.
-
-## Offsets & patches
-
-PoE2 memory offsets drift with game patches. Validated offsets live in `Game/Poe2Offsets.cs`
-(each marked `✓` when confirmed live). After a patch that breaks reads, use the `POE2Radar.Research`
-probes to re-discover them. There is no live oracle for PoE2, so validation is value-scan / manual.
+| Project | Purpose |
+|---------|---------|
+| `POE2Radar.Core` | Memory reading, offset tables, AOB scanning, cheat engine |
+| `POE2Radar.Overlay` | Tick loop, Direct2D overlay, WinForms settings, HTTP API + web dashboard |
+| `POE2Radar.Research` | Dev-time offset discovery and validation tools |
 
 ## Credits
 
-Memory-layout research and the AOB approach draw heavily on the open-source **GameHelper2** project
-(its `GameOffsets` were the starting reference for PoE2's struct shapes). GameHelper2 is not
-redistributed here; only independently re-validated offset values are recorded in this repo.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+- Based on [Sikaka/POE2Radar](https://github.com/Sikaka/POE2Radar) (MIT License)
+- Cheat system ported from [GameHelper2](https://github.com/mm3141/GameHelper)
+- Community landmark data contributed by PoE2 players
