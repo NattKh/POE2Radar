@@ -67,6 +67,7 @@ tr.watched{background:#2a3a2a}
   <button class="tab" onclick="showTab('watched')">Watched</button>
   <button class="tab" onclick="showTab('database')">Database</button>
   <button class="tab" onclick="showTab('settings')">Radar Settings</button>
+  <button class="tab" onclick="showTab('rules')">Auto-Skills</button>
   <button class="tab" onclick="showTab('pathing')">Pathing</button>
   <button class="tab" onclick="showTab('landmarks')">Landmarks</button>
 </div>
@@ -126,6 +127,36 @@ tr.watched{background:#2a3a2a}
   <div id="settingsBody"></div>
 </div>
 
+<!-- AUTO-SKILLS -->
+<div class="panel" id="tab-rules">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+    <h2 style="margin:0">Auto-Skill Rules</h2>
+    <button class="btn btn-save" id="rulesToggle" onclick="toggleRules()">Loading...</button>
+    <span style="font-size:11px;color:#888">F8 also toggles in-game</span>
+  </div>
+  <p style="font-size:12px;color:#aaa;margin-bottom:10px">
+    Each rule: if ALL conditions are true → press the key. Rules checked every tick. Cooldown prevents spam.
+  </p>
+  <div id="rulesList"></div>
+  <div class="section" style="margin-top:10px">
+    <h3>Add Rule</h3>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <input type="text" id="ruleAddName" placeholder="Name" style="width:100px">
+      <label style="font-size:12px;color:#ccc">Key:</label>
+      <input type="text" id="ruleAddKey" placeholder="e.g. Q, 1, R" style="width:50px">
+      <label style="font-size:12px;color:#ccc">CD:</label>
+      <input type="number" id="ruleAddCd" value="2" min="0.1" max="30" step="0.5" style="width:50px">
+      <label style="font-size:12px;color:#ccc">HP&lt;</label>
+      <input type="number" id="ruleAddHp" placeholder="-" min="0" max="100" style="width:50px">
+      <label style="font-size:12px;color:#ccc">Mana&lt;</label>
+      <input type="number" id="ruleAddMana" placeholder="-" min="0" max="100" style="width:50px">
+      <label style="font-size:12px;color:#ccc">Enemies&ge;</label>
+      <input type="number" id="ruleAddEnemies" placeholder="-" min="0" max="50" style="width:50px">
+      <button class="btn btn-add" onclick="addRule()">Add</button>
+    </div>
+  </div>
+</div>
+
 <!-- PATHING -->
 <div class="panel" id="tab-pathing">
   <p style="font-size:12px;color:#aaa;margin-bottom:10px">
@@ -160,6 +191,7 @@ function showTab(name){
   [...document.querySelectorAll('.tab')].find(t=>t.textContent.toLowerCase().includes(name.slice(0,4))||t.getAttribute('onclick')?.includes(name))?.classList.add('active');
   $('tab-'+name).classList.add('active');
   if(name==='watched')refreshWatched();
+  if(name==='rules')refreshRules();
   if(name==='pathing')refreshPathing();
   if(name==='landmarks')refreshLandmarks();
   if(name==='database'&&db.length===0)loadDb();
@@ -344,6 +376,17 @@ const settingsDef = [
     {key:'offsetY',label:'Offset Y',type:'num',min:-50,max:50,step:0.5},
     {key:'scaleMul',label:'Scale',type:'num',min:0.3,max:3,step:0.02},
   ]},
+  {section:'Minimap',items:[
+    {key:'showMinimap',label:'Show Minimap (when big map closed)',type:'bool'},
+    {key:'minimapSize',label:'Size (px)',type:'num',min:100,max:500,step:10},
+    {key:'minimapScale',label:'Zoom',type:'num',min:0.1,max:2,step:0.05},
+    {key:'minimapOpacity',label:'Opacity',type:'num',min:0.2,max:1,step:0.05},
+    {key:'minimapPosition',label:'Corner',type:'text'},
+  ]},
+  {section:'Exploration Fog',items:[
+    {key:'showExplorationFog',label:'Show Unexplored Fog',type:'bool'},
+    {key:'fogOpacity',label:'Fog Darkness',type:'num',min:0.1,max:0.9,step:0.05},
+  ]},
   {section:'Junk Filter',items:[
     {key:'hideJunkEntities',label:'Hide Junk (attachments, mods, fx, cosmetics)',type:'bool'},
   ]},
@@ -387,6 +430,55 @@ function setSetting(key,val){settings[key]=val;}
 async function saveSettings(){
   await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
   $('savedMsg').classList.add('show');setTimeout(()=>$('savedMsg').classList.remove('show'),1500);
+}
+
+// ── AUTO-SKILLS ──
+const VK_NAMES={0x31:'1',0x32:'2',0x33:'3',0x34:'4',0x35:'5',0x51:'Q',0x57:'W',0x45:'E',0x52:'R',0x54:'T'};
+function vkName(k){return VK_NAMES[k]||`0x${k.toString(16).toUpperCase()}`;}
+function parseKey(s){
+  s=s.trim().toUpperCase();
+  for(const[k,v]of Object.entries(VK_NAMES))if(v===s)return parseInt(k);
+  if(s.length===1)return s.charCodeAt(0);
+  if(s.startsWith('0X'))return parseInt(s,16);
+  return 0x51;
+}
+
+async function refreshRules(){
+  const data=await(await fetch('/api/rules')).json();
+  $('rulesToggle').textContent=data.enabled?'ON':'OFF';
+  $('rulesToggle').style.background=data.enabled?'#2a5a2a':'#5a2a2a';
+  $('rulesList').innerHTML=data.rules.map((r,i)=>
+    `<div class="watched-item" style="flex-wrap:wrap">
+      <label><input type="checkbox" ${r.enabled?'checked':''} onchange="updateRule(${i},{enabled:this.checked})"></label>
+      <input type="text" value="${r.name}" style="width:90px;background:#1e1e28;border:1px solid #444;color:#afc;border-radius:3px;padding:2px 6px;font-size:13px;font-weight:bold"
+        onchange="updateRule(${i},{name:this.value})">
+      <span style="color:#78b4ff;font-size:12px">Key: ${vkName(r.key)}</span>
+      <span style="color:#aaa;font-size:11px">CD: ${r.cooldownSec}s</span>
+      ${r.hpBelow?`<span style="color:#f88;font-size:11px">HP&lt;${r.hpBelow}%</span>`:''}
+      ${r.manaBelow?`<span style="color:#88f;font-size:11px">Mana&lt;${r.manaBelow}%</span>`:''}
+      ${r.enemiesNearby?`<span style="color:#ff8;font-size:11px">Enemies&ge;${r.enemiesNearby}</span>`:''}
+      <button class="btn btn-rm" style="margin-left:auto" onclick="deleteRule(${i})">X</button>
+    </div>`
+  ).join('')||'<div style="color:#666;padding:8px">No rules. Add one below.</div>';
+}
+async function toggleRules(){await fetch('/api/rules/toggle');refreshRules();}
+async function updateRule(i,changes){
+  const data=await(await fetch('/api/rules')).json();
+  const rule={...data.rules[i],...changes};
+  await fetch('/api/rules',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i,rule})});
+  refreshRules();
+}
+async function deleteRule(i){await fetch('/api/rules?index='+i,{method:'DELETE'});refreshRules();}
+async function addRule(){
+  const name=$('ruleAddName').value||'Skill';
+  const key=parseKey($('ruleAddKey').value||'Q');
+  const cd=parseFloat($('ruleAddCd').value)||2;
+  const hp=$('ruleAddHp').value?parseFloat($('ruleAddHp').value):null;
+  const mana=$('ruleAddMana').value?parseFloat($('ruleAddMana').value):null;
+  const enemies=$('ruleAddEnemies').value?parseInt($('ruleAddEnemies').value):null;
+  await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,key,enabled:true,cooldownSec:cd,hpBelow:hp,manaBelow:mana,enemiesNearby:enemies})});
+  $('ruleAddName').value='';$('ruleAddKey').value='';refreshRules();
 }
 
 // ── PATHING ──

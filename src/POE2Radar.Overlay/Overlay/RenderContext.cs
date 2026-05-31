@@ -30,4 +30,5 @@ public sealed record RenderContext(
     POE2Radar.Overlay.Web.WatchedEntities? Watched = null,
     List<(int X, int Y)>? PathPoints = null,
     List<(float ScreenX, float ScreenY, string Metadata)>? EntityScreenPositions = null,
-    List<(float ScreenX, float ScreenY, float GridX, float GridY, string Name)>? LandmarkScreenPositions = null);
+    List<(float ScreenX, float ScreenY, float GridX, float GridY, string Name)>? LandmarkScreenPositions = null,
+    POE2Radar.Core.Pathfinding.ExplorationTracker? Exploration = null);

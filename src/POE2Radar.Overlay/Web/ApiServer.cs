@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using POE2Radar.Core.Game;
+using POE2Radar.Overlay.Automation;
 
 namespace POE2Radar.Overlay.Web;
 
@@ -12,6 +13,7 @@ public sealed class ApiServer : IDisposable
     private readonly Func<RadarState> _state;
     private readonly WatchedEntities _watched;
     private readonly PathingTargets _pathing;
+    private readonly AutoRuleEngine _autoRules;
     private readonly RadarSettings _settings;
     private volatile bool _running;
 
@@ -19,11 +21,12 @@ public sealed class ApiServer : IDisposable
 
     public WatchedEntities Watched => _watched;
 
-    public ApiServer(Func<RadarState> state, WatchedEntities watched, RadarSettings settings, PathingTargets pathing, int port = 7777)
+    public ApiServer(Func<RadarState> state, WatchedEntities watched, RadarSettings settings, PathingTargets pathing, AutoRuleEngine autoRules, int port = 7777)
     {
         _state = state;
         _watched = watched;
         _pathing = pathing;
+        _autoRules = autoRules;
         _settings = settings;
         _listener.Prefixes.Add($"http://localhost:{port}/");
     }
@@ -236,6 +239,51 @@ public sealed class ApiServer : IDisposable
             {
                 var next = _pathing.CycleNext();
                 WriteJson(ctx, new { ok = true, current = next?.Pattern, label = next?.Label });
+                break;
+            }
+
+            case "/api/rules":
+            {
+                if (method == "GET")
+                    WriteJson(ctx, new { enabled = _autoRules.Enabled, rules = _autoRules.Rules });
+                else if (method == "POST")
+                {
+                    var body = ReadBody(ctx);
+                    var rule = JsonSerializer.Deserialize<AutoRule>(body, Json);
+                    if (rule != null) { _autoRules.Add(rule); WriteJson(ctx, new { ok = true }); }
+                    else WriteJson(ctx, new { error = "bad json" }, 400);
+                }
+                else if (method == "PUT")
+                {
+                    var body = ReadBody(ctx);
+                    var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+                    if (data != null && data.TryGetValue("index", out var idxEl))
+                    {
+                        var idx = idxEl.GetInt32();
+                        if (data.TryGetValue("enabled", out var enEl))
+                            _autoRules.Enabled = enEl.GetBoolean();
+                        if (data.TryGetValue("rule", out var ruleEl))
+                        {
+                            var rule = JsonSerializer.Deserialize<AutoRule>(ruleEl.GetRawText(), Json);
+                            if (rule != null) _autoRules.Update(idx, rule);
+                        }
+                        WriteJson(ctx, new { ok = true });
+                    }
+                    else WriteJson(ctx, new { error = "missing index" }, 400);
+                }
+                else if (method == "DELETE")
+                {
+                    var idxStr = q["index"];
+                    if (int.TryParse(idxStr, out var idx)) { _autoRules.Remove(idx); WriteJson(ctx, new { ok = true }); }
+                    else WriteJson(ctx, new { error = "missing index" }, 400);
+                }
+                break;
+            }
+
+            case "/api/rules/toggle":
+            {
+                _autoRules.Enabled = !_autoRules.Enabled;
+                WriteJson(ctx, new { enabled = _autoRules.Enabled });
                 break;
             }
 

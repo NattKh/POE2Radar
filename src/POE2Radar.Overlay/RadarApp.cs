@@ -4,8 +4,10 @@ using POE2Radar.Core;
 using POE2Radar.Core.Cheats;
 using POE2Radar.Core.Game;
 using POE2Radar.Core.Pathfinding;
+using static POE2Radar.Core.Pathfinding.ExplorationTracker;
 using POE2Radar.Overlay.Input;
 using POE2Radar.Overlay.Native;
+using POE2Radar.Overlay.Automation;
 using POE2Radar.Overlay.Web;
 
 #pragma warning disable CA1416
@@ -25,6 +27,7 @@ public sealed class RadarApp : IDisposable
     private readonly OverlayRenderer _renderer;
     private readonly WatchedEntities _watched;
     private readonly PathingTargets _pathing;
+    private readonly AutoRuleEngine _autoRules;
     private readonly ApiServer _api;
     private readonly RadarSettings _radarSettings;
     private SettingsForm? _settingsForm;
@@ -46,6 +49,7 @@ public sealed class RadarApp : IDisposable
     private string? _manualPathPattern;
     private (int X, int Y)? _manualPathGridTarget;
     private readonly List<(float ScreenX, float ScreenY, string Metadata)> _entityScreenPos = new();
+    private readonly ExplorationTracker _exploration = new();
     private readonly List<(float ScreenX, float ScreenY, float GridX, float GridY, string Name)> _landmarkScreenPos = new();
 
     private const int LifeVk = 0x31, ManaVk = 0x32;
@@ -88,7 +92,8 @@ public sealed class RadarApp : IDisposable
         _radarSettings = RadarSettings.Load(Path.Combine(configDir, "radar_settings.json"));
         _watched = new WatchedEntities(Path.Combine(configDir, "watched_entities.json"));
         _pathing = new PathingTargets(Path.Combine(configDir, "pathing_targets.json"));
-        _api = new ApiServer(() => _state, _watched, _radarSettings, _pathing);
+        _autoRules = new AutoRuleEngine(Path.Combine(configDir, "auto_rules.json"));
+        _api = new ApiServer(() => _state, _watched, _radarSettings, _pathing, _autoRules);
         try { _api.Start(); Console.WriteLine("API on http://localhost:7777 (/state, /entities)"); }
         catch (Exception ex) { Console.Error.WriteLine($"API server disabled: {ex.Message}"); }
     }
@@ -126,6 +131,7 @@ public sealed class RadarApp : IDisposable
             areaLevel = _live.AreaLevel(areaInstance);
 
             player = _live.PlayerGrid(localPlayer) ?? NumVec2.Zero;
+            _exploration.Update(player.X, player.Y, areaInstance);
             map = _live.ReadMap(inGameState, areaInstance);
             _areaCode = _live.AreaCode(areaInstance);
             _charName = _live.PlayerName(localPlayer);
@@ -173,7 +179,8 @@ public sealed class RadarApp : IDisposable
             Watched: _watched,
             PathPoints: _pathPoints,
             EntityScreenPositions: _entityScreenPos,
-            LandmarkScreenPositions: _landmarkScreenPos);
+            LandmarkScreenPositions: _landmarkScreenPos,
+            Exploration: _exploration);
         _renderer.Render(ctx);
     }
 
@@ -244,20 +251,24 @@ public sealed class RadarApp : IDisposable
         _hpPct = v.HpPct; _manaPct = v.ManaPct;
 
         if (!_autoFlask) { _flaskNote = "OFF (F8)"; return; }
-        if (GetForegroundWindow() != _gameHwnd) { _flaskNote = "paused (PoE2 not focused)"; return; }
+        if (GetForegroundWindow() != _gameHwnd) { _flaskNote = "paused"; return; }
         _flaskNote = "armed";
 
-        var hpThresh = _radarSettings.HpThreshold;
-        var manaThresh = _radarSettings.ManaThreshold;
-
-        var now = DateTime.UtcNow;
-        if (v.HpPct < hpThresh && now - _lifeFiredAt >= LifeCooldown)
+        // Count nearby enemies for rule conditions
+        var playerGrid = _live.PlayerGrid(localPlayer) ?? System.Numerics.Vector2.Zero;
+        var nearbyCount = 0;
+        foreach (var e in _entities)
         {
-            SendInputNative.Tap(LifeVk); _lifeFiredAt = now; _flaskNote = $"life@{v.HpPct:F0}%";
+            if (e.Category != Poe2Live.EntityCategory.Monster || !e.IsAlive) continue;
+            if ((e.Grid - playerGrid).Length() < 60f) nearbyCount++;
         }
-        if (v.ManaPct < manaThresh && now - _manaFiredAt >= ManaCooldown)
+
+        foreach (var rule in _autoRules.Rules)
         {
-            SendInputNative.Tap(ManaVk); _manaFiredAt = now; _flaskNote = $"mana@{v.ManaPct:F0}%";
+            if (!_autoRules.Evaluate(rule, _hpPct, _manaPct, nearbyCount)) continue;
+            SendInputNative.Tap((ushort)rule.Key);
+            _autoRules.MarkFired(rule);
+            _flaskNote = $"{rule.Name}";
         }
     }
 

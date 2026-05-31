@@ -57,6 +57,17 @@ public sealed class RadarSettings
     public string WatchedColor { get; set; } = "#ffffff";
     public string TerrainColor { get; set; } = "#1a3a1a";
 
+    // Minimap
+    public bool ShowMinimap { get; set; } = true;
+    public float MinimapSize { get; set; } = 250f;
+    public float MinimapScale { get; set; } = 0.5f;
+    public float MinimapOpacity { get; set; } = 0.85f;
+    public string MinimapPosition { get; set; } = "bottomright";
+
+    // Exploration fog
+    public bool ShowExplorationFog { get; set; } = true;
+    public float FogOpacity { get; set; } = 0.45f;
+
     // Junk filter
     public bool HideJunkEntities { get; set; } = true;
 

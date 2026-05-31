@@ -43,7 +43,7 @@ public sealed class OverlayRenderer : IDisposable
 
     private ID2D1SolidColorBrush? _bPlayer, _bMonster, _bNpc, _bChest, _bTrans, _bObject, _bOther, _bText, _bPanel, _bLandmark;
     private ID2D1SolidColorBrush? _bMagic, _bRare, _bUnique;
-    private ID2D1SolidColorBrush? _bCheatOn, _bCheatOff, _bCheatMiss;
+    private ID2D1SolidColorBrush? _bCheatOn, _bCheatOff, _bCheatMiss, _bFog;
     private IDWriteTextFormat? _tf;
     private IDWriteTextFormat? _tfLandmark, _tfTransition, _tfChest;
     private float _lastLmFs, _lastTrFs, _lastChFs;
@@ -103,6 +103,8 @@ public sealed class OverlayRenderer : IDisposable
                 if (ctx.InGame && ctx.Radar?.ShowNameplates != false) DrawNameplates(rt, ctx);
                 if (ctx is { InGame: true, Map.IsVisible: true })
                     DrawMap(rt, ctx);
+                if (ctx.InGame && ctx.Radar?.ShowMinimap == true && !ctx.Map.IsVisible)
+                    DrawMinimap(rt, ctx);
             }
         }
         finally { rt.EndDraw(); }
@@ -111,28 +113,53 @@ public sealed class OverlayRenderer : IDisposable
 
     private void DrawStatus(ID2D1RenderTarget rt, RenderContext ctx)
     {
-        int enemies = 0, uniques = 0, rares = 0;
+        if (ctx.Radar?.ShowStatusBar == false) return;
+
+        int alive = 0, normals = 0, magics = 0, rares = 0, uniques = 0;
+        int npcs = 0, chests = 0, transitions = 0;
         foreach (var e in ctx.Entities)
+        {
             if (e.Category == Poe2Live.EntityCategory.Monster && e.IsAlive)
             {
-                enemies++;
-                if (e.Rarity == Poe2Live.Rarity.Unique) uniques++;
-                else if (e.Rarity == Poe2Live.Rarity.Rare) rares++;
+                alive++;
+                switch (e.Rarity) { case Poe2Live.Rarity.Unique: uniques++; break; case Poe2Live.Rarity.Rare: rares++; break; case Poe2Live.Rarity.Magic: magics++; break; default: normals++; break; }
             }
+            else if (e.Category == Poe2Live.EntityCategory.Npc) npcs++;
+            else if (e.Category == Poe2Live.EntityCategory.Chest && !e.Opened) chests++;
+            else if (e.Category == Poe2Live.EntityCategory.Transition) transitions++;
+        }
 
         var line = !ctx.InGame
             ? "waiting for in-game..."
-            : $"{ctx.AreaCode}  HP {ctx.HpPct:F0}%  MP {ctx.ManaPct:F0}%  "
-              + $"flask:{ctx.FlaskNote}  enemies:{enemies} (R{rares} U{uniques})";
+            : $"{ctx.AreaCode}  HP {ctx.HpPct:F0}%  MP {ctx.ManaPct:F0}%  flask:{ctx.FlaskNote}";
         rt.FillRectangle(new Vortice.RawRectF(6, 6, 6 + line.Length * 7.3f + 10, 26), _bPanel!);
         rt.DrawText(line, _tf!, new Rect(12, 8, 1200, 22), _bText!, DrawTextOptions.Clip);
+
+        if (ctx.InGame)
+        {
+            var hud = $"Alive:{alive} (N{normals} M{magics} R{rares} U{uniques})  NPC:{npcs}  Chest:{chests}  Exit:{transitions}";
+            const float hudY = 28f;
+            rt.FillRectangle(new Vortice.RawRectF(6, hudY, 6 + hud.Length * 7.3f + 10, hudY + 20), _bPanel!);
+
+            var cx = 12f;
+            void DrawSeg(string t, ID2D1SolidColorBrush b) { rt.DrawText(t, _tf!, new Rect(cx, hudY + 2, cx + 300, hudY + 16), b); cx += t.Length * 7.3f; }
+            DrawSeg($"Alive:{alive} (", _bText!);
+            DrawSeg($"N{normals} ", _bMonster!);
+            DrawSeg($"M{magics} ", _bMagic!);
+            DrawSeg($"R{rares} ", _bRare!);
+            DrawSeg($"U{uniques}", _bUnique!);
+            DrawSeg($")  ", _bText!);
+            DrawSeg($"NPC:{npcs}  ", _bNpc!);
+            DrawSeg($"Chest:{chests}  ", _bChest!);
+            DrawSeg($"Exit:{transitions}", _bTrans!);
+        }
 
         if (ctx.CheatStatus is { Count: > 0 } cheats)
         {
             var cx = 12f;
-            const float cy = 30f;
+            const float cy = 50f;
             var label = "cheats: ";
-            rt.FillRectangle(new Vortice.RawRectF(6, 28, 500, 48), _bPanel!);
+            rt.FillRectangle(new Vortice.RawRectF(6, 48, 500, 68), _bPanel!);
             rt.DrawText(label, _tf!, new Rect(cx, cy, cx + 200, cy + 14), _bText!, DrawTextOptions.Clip);
             cx += label.Length * 7.3f;
 
@@ -279,6 +306,31 @@ public sealed class OverlayRenderer : IDisposable
             }
         }
 
+        // Exploration fog — dim unexplored walkable areas
+        if (ctx is { Terrain: { } ft, Exploration: { } expl, Radar.ShowExplorationFog: true })
+        {
+            var fogAlpha = ctx.Radar?.FogOpacity ?? 0.45f;
+            if (_bFog == null)
+                _bFog = rt.CreateSolidColorBrush(new Color4(0f, 0f, 0f, fogAlpha));
+            else
+                _bFog.Color = new Color4(0f, 0f, 0f, fogAlpha);
+
+            const int step = 4;
+            var halfStep = step / 2f;
+            for (var gy = 0; gy < ft.Height; gy += step)
+            {
+                for (var gx = 0; gx < ft.Width; gx += step)
+                {
+                    if (ft.Walkable[gy * ft.Width + gx] == 0) continue;
+                    if (expl.IsExplored(gx, gy)) continue;
+                    var p = Project(new NumVec2(gx + halfStep, gy + halfStep), player, center, scale);
+                    var sz = scale * step * 0.12f;
+                    if (sz < 0.5f) continue;
+                    rt.FillRectangle(new Vortice.RawRectF(p.X - sz, p.Y - sz, p.X + sz, p.Y + sz), _bFog);
+                }
+            }
+        }
+
         // Entity dots. Props (Object/Other) and dead monsters are filtered out — they're the
         // clutter; the API still serves them for troubleshooting. Game-flagged POIs (entities
         // with a MinimapIcon component) always draw with a white ring, even if their category
@@ -385,6 +437,98 @@ public sealed class OverlayRenderer : IDisposable
         rt.FillEllipse(new Ellipse(center, 5f, 5f), _bPlayer!);
     }
 
+    private void DrawMinimap(ID2D1RenderTarget rt, RenderContext ctx)
+    {
+        var rs = ctx.Radar!;
+        var sz = rs.MinimapSize;
+        var mmScale = rs.MinimapScale;
+        var player = ctx.PlayerGrid;
+
+        float mx, my;
+        switch (rs.MinimapPosition)
+        {
+            case "topleft":     mx = 10; my = 75; break;
+            case "topright":    mx = ctx.WindowWidth - sz - 10; my = 75; break;
+            case "bottomleft":  mx = 10; my = ctx.WindowHeight - sz - 10; break;
+            default:            mx = ctx.WindowWidth - sz - 10; my = ctx.WindowHeight - sz - 10; break;
+        }
+
+        var center = new NumVec2(mx + sz / 2, my + sz / 2);
+
+        // Background
+        rt.FillRoundedRectangle(
+            new RoundedRectangle(new Vortice.RawRectF(mx - 2, my - 2, mx + sz + 2, my + sz + 2), 6, 6),
+            _bPanel!);
+
+        // Clip to minimap area
+        rt.PushAxisAlignedClip(new Vortice.RawRectF(mx, my, mx + sz, my + sz), AntialiasMode.Aliased);
+
+        // Terrain
+        if (ctx.Terrain is { } t)
+        {
+            _terrain ??= new TerrainBitmap(rt);
+            if (_terrain.Bitmap is { } bmp)
+            {
+                var p00 = Project(new NumVec2(0, 0), player, center, mmScale);
+                var p10 = Project(new NumVec2(t.Width, 0), player, center, mmScale);
+                var p01 = Project(new NumVec2(0, t.Height), player, center, mmScale);
+                var ex = (p10 - p00) / t.Width;
+                var ey = (p01 - p00) / t.Height;
+                var prev = rt.Transform;
+                rt.Transform = new Matrix3x2(ex.X, ex.Y, ey.X, ey.Y, p00.X, p00.Y);
+                rt.DrawBitmap(bmp, rs.MinimapOpacity, BitmapInterpolationMode.Linear, new Rect(0, 0, t.Width, t.Height));
+                rt.Transform = prev;
+            }
+        }
+
+        // Entity dots (simplified — just colored dots, no shapes)
+        foreach (var e in ctx.Entities)
+        {
+            if (!e.IsAlive && e.HpMax > 0) continue;
+            ID2D1SolidColorBrush? b; float r;
+            switch (e.Category)
+            {
+                case Poe2Live.EntityCategory.Monster:
+                    (b, r) = e.Rarity switch
+                    {
+                        Poe2Live.Rarity.Unique => (_bUnique, 4f),
+                        Poe2Live.Rarity.Rare   => (_bRare, 3.5f),
+                        Poe2Live.Rarity.Magic  => (_bMagic, 2.5f),
+                        _                      => (_bMonster, 1.8f),
+                    };
+                    break;
+                case Poe2Live.EntityCategory.Npc:        (b, r) = (_bNpc, 2.5f); break;
+                case Poe2Live.EntityCategory.Chest:      if (e.Opened) continue; (b, r) = (_bChest, 2.5f); break;
+                case Poe2Live.EntityCategory.Transition:  (b, r) = (_bTrans, 3f); break;
+                default: continue;
+            }
+            if (b == null) continue;
+            var p = Project(new NumVec2(e.Grid.X, e.Grid.Y), player, center, mmScale);
+            rt.FillEllipse(new Ellipse(p, r, r), b);
+        }
+
+        // Player blip
+        rt.FillEllipse(new Ellipse(center, 4f, 4f), _bPlayer!);
+
+        // Path line
+        if (ctx.PathPoints is { Count: >= 2 } pp)
+        {
+            for (var i = 0; i < pp.Count - 1; i++)
+            {
+                var a = Project(new NumVec2(pp[i].X, pp[i].Y), player, center, mmScale);
+                var b2 = Project(new NumVec2(pp[i + 1].X, pp[i + 1].Y), player, center, mmScale);
+                rt.DrawLine(a, b2, _bTrans!, 1.5f);
+            }
+        }
+
+        rt.PopAxisAlignedClip();
+
+        // Border
+        rt.DrawRoundedRectangle(
+            new RoundedRectangle(new Vortice.RawRectF(mx - 2, my - 2, mx + sz + 2, my + sz + 2), 6, 6),
+            _bText!, 1f);
+    }
+
     private static NumVec2 Project(NumVec2 cell, NumVec2 player, NumVec2 center, float scale)
     {
         var d = cell - player;
@@ -397,7 +541,7 @@ public sealed class OverlayRenderer : IDisposable
         _bPlayer?.Dispose(); _bMonster?.Dispose(); _bNpc?.Dispose(); _bChest?.Dispose();
         _bTrans?.Dispose(); _bObject?.Dispose(); _bOther?.Dispose(); _bText?.Dispose(); _bPanel?.Dispose(); _bLandmark?.Dispose();
         _bMagic?.Dispose(); _bRare?.Dispose(); _bUnique?.Dispose();
-        _bCheatOn?.Dispose(); _bCheatOff?.Dispose(); _bCheatMiss?.Dispose();
+        _bCheatOn?.Dispose(); _bCheatOff?.Dispose(); _bCheatMiss?.Dispose(); _bFog?.Dispose();
         _geoTriangle?.Dispose(); _geoStar?.Dispose(); _geoDiamond?.Dispose(); _geoPlus?.Dispose();
         _tf?.Dispose(); _tfLandmark?.Dispose(); _tfTransition?.Dispose(); _tfChest?.Dispose();
         _terrain?.Dispose();
