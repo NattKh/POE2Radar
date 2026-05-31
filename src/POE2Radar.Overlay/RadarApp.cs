@@ -179,7 +179,17 @@ public sealed class RadarApp : IDisposable
 
     private void HandleSettingsToggle()
     {
-        // F7 cycle pathing target
+        // F7 cycle pathing target, Escape = back to auto-nearest
+        if (Down(0x1B) && DateTime.UtcNow >= _nextToggleAt && (_manualPathPattern != null || _manualPathGridTarget != null))
+        {
+            _nextToggleAt = DateTime.UtcNow.AddMilliseconds(300);
+            _manualPathPattern = null;
+            _manualPathGridTarget = null;
+            _pathPoints = null;
+            _lastPathTarget = "";
+            _lastPathPlayerGrid = NumVec2.Zero;
+            Console.WriteLine("\nPath: back to auto-nearest");
+        }
         if (Down(0x76) && DateTime.UtcNow >= _nextToggleAt)
         {
             _nextToggleAt = DateTime.UtcNow.AddMilliseconds(300);
@@ -187,8 +197,10 @@ public sealed class RadarApp : IDisposable
             if (next != null)
             {
                 _manualPathPattern = next.Pattern;
+                _manualPathGridTarget = null;
                 _pathPoints = null;
                 _lastPathTarget = "";
+                _lastPathPlayerGrid = NumVec2.Zero;
                 Console.WriteLine($"\nPath target: {next.Label} ({next.Pattern})");
             }
         }
@@ -266,10 +278,9 @@ public sealed class RadarApp : IDisposable
         float bestLmGx = 0, bestLmGy = 0;
         foreach (var (sx, sy, gx, gy, name) in _landmarkScreenPos)
         {
-            // Hit test the label area (diamond + text extends ~200px to the right)
             var dx = cx - sx;
             var dy = cy - sy;
-            if (dx >= -10 && dx <= 200 && dy >= -15 && dy <= 15)
+            if (dx >= -15 && dx <= 300 && dy >= -25 && dy <= 25)
             {
                 var d2 = dx * dx + dy * dy;
                 if (d2 < bestDist) { bestDist = d2; bestLandmark = name; bestLmGx = gx; bestLmGy = gy; }
@@ -282,13 +293,14 @@ public sealed class RadarApp : IDisposable
             _manualPathGridTarget = ((int)bestLmGx, (int)bestLmGy);
             _pathPoints = null;
             _lastPathTarget = "";
-            Console.WriteLine($"\nAlt+click nav to landmark: {bestLandmark}");
+            _lastPathPlayerGrid = NumVec2.Zero;
+            Console.WriteLine($"\nAlt+click nav to landmark: {bestLandmark} grid=({(int)bestLmGx},{(int)bestLmGy})");
             return;
         }
 
         // Check entities
         string? bestMeta = null;
-        bestDist = 20f * 20f;
+        bestDist = 35f * 35f;
         foreach (var (sx, sy, meta) in _entityScreenPos)
         {
             var dx = sx - cx;
@@ -304,6 +316,7 @@ public sealed class RadarApp : IDisposable
             _manualPathGridTarget = null;
             _pathPoints = null;
             _lastPathTarget = "";
+            _lastPathPlayerGrid = NumVec2.Zero;
             Console.WriteLine($"\nAlt+click nav: {shortName}");
         }
     }
@@ -319,6 +332,7 @@ public sealed class RadarApp : IDisposable
         int destX, destY;
         string cacheKey;
 
+        // Priority: 1) Alt+click grid target, 2) F7/Alt+click entity pattern, 3) auto-nearest
         if (_manualPathGridTarget is { } gridTarget)
         {
             destX = gridTarget.X;
@@ -327,10 +341,9 @@ public sealed class RadarApp : IDisposable
         }
         else
         {
-            string? targetPattern;
-            if (_manualPathPattern != null)
-                targetPattern = _manualPathPattern;
-            else
+            string? targetPattern = _manualPathPattern;
+
+            if (targetPattern == null)
             {
                 if (_pathing.All.Count == 0) { _pathPoints = null; return; }
                 var entityInfo = _entities
@@ -351,10 +364,14 @@ public sealed class RadarApp : IDisposable
                 if (d < closestDist) { closestDist = d; closest = e; }
             }
 
-            if (closest == null) { _pathPoints = null; return; }
+            if (closest == null)
+            {
+                if (_manualPathPattern != null) return; // keep last path visible
+                _pathPoints = null; return;
+            }
             destX = (int)closest.Value.Grid.X;
             destY = (int)closest.Value.Grid.Y;
-            cacheKey = targetPattern;
+            cacheKey = $"entity:{targetPattern}:{destX},{destY}";
         }
 
         var playerMoved = (playerGrid - _lastPathPlayerGrid).Length() > 3f;
@@ -365,9 +382,27 @@ public sealed class RadarApp : IDisposable
         _lastPathTarget = cacheKey;
 
         var t = _terrain;
-        var result = AStarPathfinder.FindPath(t.Walkable, t.Width, t.Height,
-            (int)playerGrid.X, (int)playerGrid.Y, destX, destY);
-        _pathPoints = result != null ? AStarPathfinder.Simplify(result.Value.Points) : null;
+        var px = (int)playerGrid.X;
+        var py = (int)playerGrid.Y;
+
+        if (destX < 0 || destX >= t.Width || destY < 0 || destY >= t.Height)
+        {
+            Console.WriteLine($"  Path dest out of bounds: ({destX},{destY}) grid=({t.Width}x{t.Height})");
+            _pathPoints = null;
+            return;
+        }
+
+        var result = AStarPathfinder.FindPath(t.Walkable, t.Width, t.Height, px, py, destX, destY);
+        if (result != null)
+        {
+            _pathPoints = AStarPathfinder.Simplify(result.Value.Points);
+            Console.WriteLine($"  Path found: {result.Value.Points.Count} pts, {result.Value.GridDistance:F0} dist, {result.Value.NodesVisited} visited");
+        }
+        else
+        {
+            Console.WriteLine($"  Path FAILED: ({px},{py}) -> ({destX},{destY})");
+            _pathPoints = null;
+        }
     }
 
     private void HandleCalibrationKeys()
