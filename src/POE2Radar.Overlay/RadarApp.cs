@@ -43,6 +43,7 @@ public sealed class RadarApp : IDisposable
     private List<(int X, int Y)>? _pathPoints;
     private NumVec2 _lastPathPlayerGrid;
     private string _lastPathTarget = "";
+    private bool _pathManualMode;
 
     private const int LifeVk = 0x31, ManaVk = 0x32;
     private static readonly TimeSpan LifeCooldown = TimeSpan.FromMilliseconds(2500);
@@ -179,7 +180,9 @@ public sealed class RadarApp : IDisposable
             var next = _pathing.CycleNext();
             if (next != null)
             {
+                _pathManualMode = true;
                 _pathPoints = null;
+                _lastPathTarget = "";
                 Console.WriteLine($"\nPath target: {next.Label} ({next.Pattern})");
             }
         }
@@ -248,27 +251,34 @@ public sealed class RadarApp : IDisposable
             return;
         }
 
-        // Auto-find nearest entity matching any enabled pathing target
-        var entityInfo = _entities
-            .Select(e => (e.Metadata, Distance: (e.Grid - playerGrid).Length(), e.IsAlive))
-            .ToList();
+        string? targetPattern;
+        if (_pathManualMode)
+        {
+            targetPattern = _pathing.Current?.Pattern;
+        }
+        else
+        {
+            var entityInfo = _entities
+                .Select(e => (e.Metadata, Distance: (e.Grid - playerGrid).Length(), e.IsAlive))
+                .ToList();
+            targetPattern = _pathing.FindNearestPattern(entityInfo!);
+        }
 
-        var bestPattern = _pathing.FindNearestPattern(entityInfo!);
-        if (bestPattern == null) { _pathPoints = null; return; }
+        if (targetPattern == null) { _pathPoints = null; return; }
 
-        var playerMoved = (playerGrid - _lastPathPlayerGrid).Length() > 5f;
-        var targetChanged = bestPattern != _lastPathTarget;
+        var playerMoved = (playerGrid - _lastPathPlayerGrid).Length() > 3f;
+        var targetChanged = targetPattern != _lastPathTarget;
         if (!playerMoved && !targetChanged && _pathPoints != null) return;
 
         _lastPathPlayerGrid = playerGrid;
-        _lastPathTarget = bestPattern;
+        _lastPathTarget = targetPattern;
 
         Poe2Live.EntityDot? closest = null;
         var closestDist = float.MaxValue;
         foreach (var e in _entities)
         {
             if (!e.IsAlive && e.HpMax > 0) continue;
-            if (!e.Metadata.Contains(bestPattern, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!e.Metadata.Contains(targetPattern, StringComparison.OrdinalIgnoreCase)) continue;
             var d = (e.Grid - playerGrid).Length();
             if (d < closestDist) { closestDist = d; closest = e; }
         }
