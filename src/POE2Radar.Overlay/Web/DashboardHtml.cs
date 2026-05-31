@@ -188,8 +188,8 @@ async function addWatched(){
   const p=$('addPattern').value.trim(),l=$('addLabel').value.trim(),c=$('addColor').value;
   if(!p)return;await doAdd(p,l||p.split('/').pop(),c);$('addPattern').value='';$('addLabel').value='';
 }
-async function doAdd(pattern,label,color){
-  await fetch('/api/watched',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern,label,color,enabled:true})});
+async function doAdd(pattern,label,color,size=7){
+  await fetch('/api/watched',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern,label,color,enabled:true,size})});
   refresh();refreshWatched();
 }
 async function rmByMeta(meta){const w=watched.find(w=>meta.includes(w.pattern));if(w)await rmWatched(w.pattern);}
@@ -197,10 +197,23 @@ async function rmWatched(pattern){await fetch('/api/watched?pattern='+encodeURIC
 async function refreshWatched(){
   watched=await(await fetch('/api/watched')).json();
   $('watchedList').innerHTML=watched.map(w=>
-    `<div class="watched-item"><div class="swatch" style="background:${w.color}"></div>
-    <div class="label">${w.label}</div><div class="pattern" title="${w.pattern}">${w.pattern}</div>
-    <button class="btn btn-rm" onclick="rmWatched('${esc(w.pattern)}')">Remove</button></div>`
+    `<div class="watched-item">
+      <input type="color" value="${w.color}" onchange="editWatched('${esc(w.pattern)}',{color:this.value})" title="Color">
+      <input type="text" value="${w.label}" style="width:120px;background:#1e1e28;border:1px solid #444;color:#afc;border-radius:3px;padding:2px 6px;font-size:13px;font-weight:bold"
+        onchange="editWatched('${esc(w.pattern)}',{label:this.value})" title="Nickname">
+      <input type="number" value="${w.size??7}" min="1" max="30" step="0.5" style="width:55px;background:#1e1e28;border:1px solid #444;color:#78b4ff;border-radius:3px;padding:2px 4px;font-size:12px"
+        onchange="editWatched('${esc(w.pattern)}',{size:parseFloat(this.value)})" title="Dot size">
+      <div class="pattern" title="${w.pattern}">${w.pattern}</div>
+      <label style="font-size:11px;color:#888;white-space:nowrap"><input type="checkbox" ${w.enabled?'checked':''} onchange="editWatched('${esc(w.pattern)}',{enabled:this.checked})"> on</label>
+      <button class="btn btn-rm" onclick="rmWatched('${esc(w.pattern)}')">X</button>
+    </div>`
   ).join('')||'<div style="color:#666;padding:8px">No watched entities yet.</div>';
+}
+async function editWatched(pattern,changes){
+  const w=watched.find(w=>w.pattern===pattern);if(!w)return;
+  const updated={...w,...changes};
+  await fetch('/api/watched',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(updated)});
+  refreshWatched();
 }
 function exportWatched(){
   const blob=new Blob([JSON.stringify(watched,null,2)],{type:'application/json'});

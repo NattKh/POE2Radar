@@ -322,13 +322,15 @@ public sealed class OverlayRenderer : IDisposable
             var p = Project(new NumVec2(e.Grid.X, e.Grid.Y), player, center, scale);
             DrawIcon(rt, icon, p, r, brush, filled: true);
 
-            // Watched entity labels (nickname)
             var watchMatch = ctx.Watched?.Match(e.Metadata);
-            if (watchMatch != null)
+            if (watchMatch is { Enabled: true })
             {
-                rt.FillEllipse(new Ellipse(p, r + 3, r + 3), _bText!);
-                DrawIcon(rt, icon, p, r, brush, filled: true);
-                rt.DrawText(watchMatch.Label, _tf!, new Rect(p.X + r + 4, p.Y - 7, p.X + 250, p.Y + 9), _bText!);
+                var wr = watchMatch.Size;
+                rt.FillEllipse(new Ellipse(p, wr + 2, wr + 2), _bText!);
+                DrawIcon(rt, icon, p, wr, brush, filled: true);
+                var wFs = rs?.WatchedFontSize ?? 14f;
+                var wTf = GetTextFormat(wFs, ref _tfLandmark, ref _lastLmFs);
+                rt.DrawText(watchMatch.Label, wTf, new Rect(p.X + wr + 4, p.Y - wFs / 2, p.X + 300, p.Y + wFs), _bText!);
             }
             else if (e.Category == Poe2Live.EntityCategory.Transition && rs?.ShowTransitions != false)
             {

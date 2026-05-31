@@ -32,9 +32,22 @@ public sealed class WatchedEntities
         return null;
     }
 
-    public void Add(string pattern, string label, string color)
+    public void Add(string pattern, string label, string color, float size = 7f)
     {
-        _entries[pattern] = new WatchedEntry(pattern, label, color, true);
+        _entries[pattern] = new WatchedEntry(pattern, label, color, true, size);
+        Save();
+    }
+
+    public void Update(string pattern, string? label = null, string? color = null, bool? enabled = null, float? size = null)
+    {
+        if (!_entries.TryGetValue(pattern, out var e)) return;
+        _entries[pattern] = e with
+        {
+            Label = label ?? e.Label,
+            Color = color ?? e.Color,
+            Enabled = enabled ?? e.Enabled,
+            Size = size ?? e.Size,
+        };
         Save();
     }
 
@@ -95,4 +108,4 @@ public sealed class WatchedEntities
     }
 }
 
-public sealed record WatchedEntry(string Pattern, string Label, string Color, bool Enabled);
+public sealed record WatchedEntry(string Pattern, string Label, string Color, bool Enabled, float Size = 7f);

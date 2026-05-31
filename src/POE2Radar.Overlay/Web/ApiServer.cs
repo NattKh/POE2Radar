@@ -125,7 +125,18 @@ public sealed class ApiServer : IDisposable
                     var entry = JsonSerializer.Deserialize<WatchedEntry>(body, Json);
                     if (entry != null)
                     {
-                        _watched.Add(entry.Pattern, entry.Label, entry.Color);
+                        _watched.Add(entry.Pattern, entry.Label, entry.Color, entry.Size);
+                        WriteJson(ctx, new { ok = true });
+                    }
+                    else WriteJson(ctx, new { error = "bad json" }, 400);
+                }
+                else if (method == "PUT")
+                {
+                    var body = ReadBody(ctx);
+                    var patch = JsonSerializer.Deserialize<WatchedEntry>(body, Json);
+                    if (patch != null)
+                    {
+                        _watched.Update(patch.Pattern, patch.Label, patch.Color, patch.Enabled, patch.Size);
                         WriteJson(ctx, new { ok = true });
                     }
                     else WriteJson(ctx, new { error = "bad json" }, 400);
