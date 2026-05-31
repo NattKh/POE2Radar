@@ -43,12 +43,27 @@ Console.Title = myName;
 Console.WriteLine(myName);
 Console.WriteLine(new string('=', myName.Length));
 
-using var process = ProcessHandle.AttachToPoE();
+ProcessHandle? process;
+try
+{
+    process = ProcessHandle.AttachToPoE();
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"Failed to attach: {ex.Message}");
+    Console.Error.WriteLine("Make sure PoE2 is running and you launched as Administrator.");
+    Console.WriteLine("Press any key to exit...");
+    Console.ReadKey();
+    return 1;
+}
 if (process is null)
 {
     Console.Error.WriteLine("PoE2 not running (no matching process found).");
+    Console.WriteLine("Press any key to exit...");
+    Console.ReadKey();
     return 1;
 }
+using var processHandle = process;
 Console.WriteLine($"Attached to {process.ProcessName} (PID {process.ProcessId})");
 
 var reader = new MemoryReader(process);
