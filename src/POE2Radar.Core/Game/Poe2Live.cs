@@ -334,10 +334,11 @@ public sealed class Poe2Live
     private static bool IsInterestingLandmark(string p)
     {
         if (string.IsNullOrEmpty(p)) return false;
-        foreach (var kw in new[] { "arena", "boss", "treasure", "waypoint", "encounter", "ritual",
-                                   "vault", "reward", "unique", "checkpoint", "altar", "shrine",
-                                   "transition", "entrance", "feature", "landmark" })
-            if (p.Contains(kw, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var kw in new[] { "Arena", "Boss", "Treasure", "Waypoint", "Encounter", "Ritual",
+                                   "Vault", "Reward", "Checkpoint", "Altar", "Shrine",
+                                   "AreaTransition", "Landmark", "Entrance_", "BossRoom",
+                                   "Medallion", "Sinkhole", "StairsUp", "StairsDown" })
+            if (p.Contains(kw, StringComparison.Ordinal)) return true;
         return false;
     }
 
