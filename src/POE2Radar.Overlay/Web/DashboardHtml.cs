@@ -69,7 +69,13 @@ tr.watched{background:#2a3a2a}
   <button class="tab" onclick="showTab('settings')">Radar Settings</button>
   <button class="tab" onclick="showTab('rules')">Auto-Skills</button>
   <button class="tab" onclick="showTab('pathing')">Pathing</button>
+  <button class="tab" onclick="showTab('minimap')">Minimap</button>
   <button class="tab" onclick="showTab('landmarks')">Landmarks</button>
+  <button class="tab" onclick="showTab('gamedata')">Game Data</button>
+  <button class="tab" onclick="showTab('hidden')">Hidden</button>
+  <button class="tab" onclick="showTab('keybinds')">Keybinds</button>
+  <button class="tab" onclick="showTab('devtest')" style="color:#f88">DevTest</button>
+  <button class="tab" onclick="showTab('inspector')">Inspector</button>
 </div>
 
 <!-- LIVE ENTITIES -->
@@ -122,7 +128,7 @@ tr.watched{background:#2a3a2a}
 <div class="panel" id="tab-settings">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
     <h2 style="margin:0">Radar Settings</h2>
-    <div><span class="saved" id="savedMsg">Saved!</span> <button class="btn btn-save" onclick="saveSettings()">Save</button></div>
+    <div><span class="saved" id="savedMsg">Saved!</span> <button class="btn btn-save" onclick="saveSettings()">Save</button> <button class="btn" style="background:#2a3a5a;color:#8cf" onclick="exportSettings()">Export</button> <button class="btn" style="background:#2a5a3a;color:#8f8" onclick="$('importFile').click()">Import</button><input type="file" id="importFile" accept=".json" style="display:none" onchange="importSettings(event)"> <button class="btn" style="background:#5a2a2a;color:#f88" onclick="resetSettings()">Reset</button></div>
   </div>
   <div id="settingsBody"></div>
 </div>
@@ -150,8 +156,18 @@ tr.watched{background:#2a3a2a}
       <input type="number" id="ruleAddHp" placeholder="-" min="0" max="100" style="width:50px">
       <label style="font-size:12px;color:#ccc">Mana&lt;</label>
       <input type="number" id="ruleAddMana" placeholder="-" min="0" max="100" style="width:50px">
+      <label style="font-size:12px;color:#ccc">ES&lt;</label>
+      <input type="number" id="ruleAddEs" placeholder="-" min="0" max="100" style="width:50px">
       <label style="font-size:12px;color:#ccc">Enemies&ge;</label>
       <input type="number" id="ruleAddEnemies" placeholder="-" min="0" max="50" style="width:50px">
+      <label style="font-size:12px;color:#ccc">Boss:</label>
+      <select id="ruleAddBoss" style="width:60px"><option value="">-</option><option value="true">Yes</option><option value="false">No</option></select>
+      <label style="font-size:12px;color:#ccc">Wait(s):</label>
+      <input type="number" id="ruleAddWait" placeholder="-" min="0" max="10" step="0.1" style="width:50px">
+      <label style="font-size:12px;color:#ccc">Moving:</label>
+      <select id="ruleAddMoving" style="width:60px"><option value="">-</option><option value="true">Yes</option><option value="false">No</option></select>
+      <label style="font-size:12px;color:#ccc">Hold Key:</label>
+      <input type="text" id="ruleAddHoldKey" placeholder="-" style="width:40px">
       <button class="btn btn-add" onclick="addRule()">Add</button>
     </div>
   </div>
@@ -172,12 +188,83 @@ tr.watched{background:#2a3a2a}
   <div id="pathingList" style="margin-top:8px"></div>
 </div>
 
+<!-- MINIMAP -->
+<div class="panel" id="tab-minimap">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h2 style="margin:0">Minimap Settings</h2>
+    <div><span class="saved" id="mmSavedMsg">Saved!</span> <button class="btn btn-save" onclick="saveSettings();$('mmSavedMsg').classList.add('show');setTimeout(()=>$('mmSavedMsg').classList.remove('show'),1500)">Save</button></div>
+  </div>
+  <div id="minimapSettingsBody"></div>
+</div>
+
 <!-- LANDMARKS -->
 <div class="panel" id="tab-landmarks">
   <div class="search"><input type="text" id="lmSearch" placeholder="Search landmarks..." style="width:300px" oninput="filterLandmarks()"></div>
   <div class="scrollbox"><table><thead>
-    <tr><th>Name</th><th>Path</th><th>Tiles</th><th>Dist</th></tr>
+    <tr><th>Name</th><th>Path</th><th>Tiles</th><th>Dist</th><th></th></tr>
   </thead><tbody id="lmBody"></tbody></table></div>
+</div>
+
+<!-- DEVTEST -->
+<div class="panel" id="tab-devtest">
+  <div style="background:#3a1a1a;border:1px solid #f44;border-radius:6px;padding:10px;margin-bottom:12px">
+    <h2 style="margin:0;color:#f88">⚠ DevTest — Game Memory Writes</h2>
+    <p style="color:#faa;font-size:12px;margin:6px 0 0">These write directly to game entity memory. <b>WILL LIKELY CRASH</b> — component byte field offsets need re-validation for the current game patch. The header delta between ComponentList pointers and setter function bases has not been resolved yet. Use at your own risk.</p>
+  </div>
+  <div id="devtestBody"></div>
+  <div style="margin-top:10px"><button class="btn btn-save" onclick="saveSettings()">Save</button></div>
+</div>
+
+<!-- GAME DATA -->
+<div class="panel" id="tab-gamedata">
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <button class="btn btn-save" onclick="loadGdAreas()">World Areas</button>
+    <button class="btn btn-save" onclick="loadGdBuffs()">Buffs</button>
+    <button class="btn btn-save" onclick="loadGdPins()">Map Pins (current zone)</button>
+  </div>
+  <div class="search"><input type="text" id="gdSearch" placeholder="Search..." style="width:300px" oninput="searchGameData()"></div>
+  <div class="scrollbox" id="gdResults" style="font-size:12px"></div>
+</div>
+
+<!-- HIDDEN ENTITIES -->
+<div class="panel" id="tab-hidden">
+  <h2>Hidden Entities / Landmarks</h2>
+  <p style="font-size:12px;color:#aaa;margin-bottom:10px">
+    Patterns listed here are hidden from the radar overlay. <b>Ctrl+Click</b> on any entity or landmark in-game to add it here.
+    You can also use the <b>Hide</b> buttons in the Live Entities and Landmarks tabs.<br>
+    <b>Wildcards:</b> Use <code>*</code> (any chars) and <code>?</code> (single char). Example: <code>*StrongBox</code> hides everything ending in StrongBox.
+    Without wildcards, patterns match as substring (current behavior).
+  </p>
+  <div class="add-form">
+    <input type="text" id="hiddenAddPattern" placeholder="Pattern (e.g. AbyssCrack, *StrongBox, Breach*)" style="width:280px">
+    <button class="btn btn-add" onclick="addHidden()">Add</button>
+  </div>
+  <div style="margin-top:8px" id="hiddenList"></div>
+</div>
+
+<!-- KEYBINDS -->
+<div class="panel" id="tab-keybinds">
+  <h2>Hotkey Bindings</h2>
+  <p style="font-size:12px;color:#aaa;margin-bottom:10px">
+    Click a key field and press any key to rebind. Click <b>Save</b> to persist. Changes take effect immediately after save.
+  </p>
+  <div id="keybindsBody"></div>
+  <div style="margin-top:10px">
+    <button class="btn btn-save" onclick="saveKeybinds()">Save</button>
+    <span class="saved" id="kbSavedMsg">Saved!</span>
+  </div>
+</div>
+
+<!-- INSPECTOR -->
+<div class="panel" id="tab-inspector">
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+    <select id="inspEntity" onchange="inspectEntity()" style="flex:1;min-width:200px;padding:4px;background:#1e1e1e;color:#eee;border:1px solid #555"></select>
+    <button onclick="loadInspectorEntities()" style="padding:4px 12px;cursor:pointer">Refresh</button>
+    <label style="font-size:12px"><input type="checkbox" id="inspAutoRefresh" checked> Auto-refresh</label>
+    <span style="font-size:12px;color:#888" id="inspStatus"></span>
+  </div>
+  <div id="inspComponents" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>
+  <div class="scrollbox" id="inspResults" style="font-size:12px"></div>
 </div>
 
 <script>
@@ -196,6 +283,12 @@ function showTab(name){
   if(name==='landmarks')refreshLandmarks();
   if(name==='database'&&db.length===0)loadDb();
   if(name==='settings')loadSettings();
+  if(name==='devtest')loadDevTest();
+  if(name==='gamedata')loadGdAreas();
+  if(name==='minimap')loadMinimapSettings();
+  if(name==='hidden')refreshHidden();
+  if(name==='keybinds'){if(!settings||!Object.keys(settings).length)loadSettings().then(loadKeybinds);else loadKeybinds();}
+  if(name==='inspector'){if(!Object.keys(inspSchema).length)loadInspectorSchema();loadInspectorEntities();}
 }
 
 // ── LIVE ENTITIES ──
@@ -203,7 +296,7 @@ async function refresh(){
   try{
     const s=await(await fetch('/state')).json();
     $('status').innerHTML=s.inGame
-      ?`<span>${s.areaCode}</span> (lvl ${s.areaLevel}) | HP ${s.hpPct.toFixed(0)}% | Entities: ${s.entityCount}`
+      ?`<span style="color:#fff">${s.areaName||s.areaCode}</span> <span style="color:#888">(${s.areaCode} · Act ${s.act||'?'} · lvl ${s.areaLevel}${s.isTown?' · Town':''}${s.hasWaypoint?' · WP':''})</span> | ${s.player?.name||''} Lv${s.player?.level||'?'} | HP ${s.hpPct.toFixed(0)}% | Entities: ${s.entityCount}`
       :'Waiting for in-game...';
     const alive=$('aliveOnly').checked?'&alive=true':'';
     entities=await(await fetch('/entities?limit=1000'+alive)).json();
@@ -217,14 +310,16 @@ function renderEntities(){
     `<button class="filter-btn ${catFilter===(c==='All'?'':c)?'active':''}" onclick="setCat('${c==='All'?'':c}')">${c}</button>`).join('');
   const f=entities.filter(e=>(!catFilter||e.category===catFilter)&&(!search||e.metadata.toLowerCase().includes(search)));
   $('entityBody').innerHTML=f.map(e=>`<tr class="${e.watched?'watched':''}">
-    <td><span class="cat cat-${e.category}">${e.category}</span></td>
+    <td><span class="cat cat-${e.category}">${e.category}</span>${e.boss?'<span style="color:#f44;font-weight:bold" title="Boss"> ★</span>':''}${e.league&&e.league!=='None'?`<span style="color:#0af;font-size:10px" title="League Mechanic"> ${e.league}</span>`:''}</td>
     <td><span class="rarity-${e.rarity}">${e.rarity}</span></td>
-    <td class="meta-short" title="${e.metadata}">${e.metadata}</td>
+    <td class="meta-short" title="${e.metadata}">${e.name||e.metadata}${e.locked?'<span style="color:#fa0" title="Locked"> 🔒</span>':''}${e.large?'<span style="color:#0af" title="Large"> L</span>':''}</td>
     <td>${e.hpMax>0?e.hpCur+'/'+e.hpMax:'-'}</td><td>${e.dist}</td>
     <td style="white-space:nowrap">
       ${e.watched?`<button class="btn btn-rm" onclick="rmByMeta('${esc(e.metadata)}')">-</button>`
                  :`<button class="btn btn-add" onclick="quickWatch('${esc(e.metadata)}')">Watch</button>`}
       <button class="btn" style="background:#2a4a5a;color:#5cf" onclick="navigateTo('${esc(e.metadata)}')">Nav</button>
+      ${e.addr?`<button class="btn" style="background:#3a2a4a;color:#c8f" onclick="inspectFromList('${e.addr}')">Inspect</button>`:''}
+      <button class="btn" style="background:#4a3a1a;color:#fa0" onclick="hideFromEntity('${esc(e.metadata)}')">Hide</button>
     </td>
   </tr>`).join('');
 }
@@ -318,18 +413,39 @@ async function dbWatch(path){const def=path.split('/').pop();const nick=prompt('
 // ── SETTINGS ──
 const settingsDef = [
   {section:'Visibility',items:[
-    {key:'showMonsters',label:'Normal Monsters',type:'bool'},
+    {key:'showMonsters',label:'Monsters (all)',type:'bool'},
     {key:'showRareMonsters',label:'Rare Monsters',type:'bool'},
     {key:'showUniqueMonsters',label:'Unique Monsters',type:'bool'},
     {key:'showNpcs',label:'NPCs',type:'bool'},
     {key:'showChests',label:'Chests',type:'bool'},
-    {key:'showTransitions',label:'Transitions',type:'bool'},
+    {key:'showTransitions',label:'Transitions / Exits',type:'bool'},
     {key:'showPlayers',label:'Other Players',type:'bool'},
     {key:'showLandmarks',label:'Landmarks',type:'bool'},
-    {key:'showNameplates',label:'HP Nameplates',type:'bool'},
     {key:'showTerrain',label:'Terrain',type:'bool'},
-    {key:'showStatusBar',label:'Status Bar',type:'bool'},
-    {key:'showWatchedLabels',label:'Watched Labels',type:'bool'},
+    {key:'showStatusBar',label:'Status HUD (top-left)',type:'bool'},
+    {key:'showWatchedLabels',label:'Watched Entity Labels',type:'bool'},
+    {key:'persistEntities',label:'Remember Entities Beyond Bubble',type:'bool'},
+  ]},
+  {section:'Label Toggles (dot still shown, only text hidden)',items:[
+    {key:'showTransitionLabels',label:'Transition / Exit Labels',type:'bool'},
+    {key:'showNpcLabels',label:'NPC Labels',type:'bool'},
+    {key:'showLandmarkLabels',label:'Landmark Labels',type:'bool'},
+    {key:'showPoiLabels',label:'POI Labels (non-NPC)',type:'bool'},
+    {key:'showMonsterLabels',label:'Monster Names (Rare/Unique)',type:'bool'},
+    {key:'showChestLabels',label:'Chest Type Labels',type:'bool'},
+  ]},
+  {section:'Visual Clutter Reduction',items:[
+    {key:'hideJunkEntities',label:'Hide Junk (attachments, effects, cosmetics)',type:'bool'},
+    {key:'hideUntargetable',label:'Hide Untargetable Entities',type:'bool'},
+    {key:'showDeadMonsters',label:'Show Dead Corpses (off = cleaner map)',type:'bool'},
+    {key:'showNormalMonsters',label:'Show Normal (white) Monsters',type:'bool'},
+    {key:'showNormalChests',label:'Show Normal Chests (not just Rare/Unique)',type:'bool'},
+    {key:'showFriendlyEntities',label:'Show Friendly Monsters (minions, allies)',type:'bool'},
+    {key:'showImmobileEntities',label:'Show Immobile Entities (speed=0, decorative)',type:'bool'},
+    {key:'entityDrawRange',label:'Max Draw Range (0 = unlimited, grid units)',type:'num',min:0,max:300,step:5},
+    {key:'minEntityHpPct',label:'Min HP% to Show (0 = show all, hides near-dead)',type:'num',min:0,max:50,step:5},
+    {key:'showDistanceRing',label:'Show Distance Ring on Map',type:'bool'},
+    {key:'distanceRingRadius',label:'Ring Radius (grid units)',type:'num',min:10,max:200,step:5},
   ]},
   {section:'Dot Sizes',items:[
     {key:'monsterDotSize',label:'Normal Monster',type:'num',min:1,max:30,step:0.5},
@@ -348,6 +464,7 @@ const settingsDef = [
     {key:'landmarkOutlineWidth',label:'Landmark Outline Width',type:'num',min:0,max:10,step:0.5},
   ]},
   {section:'Font Sizes (no limit — scale up for 4K)',items:[
+    {key:'fontFamily',label:'Font Family',type:'text'},
     {key:'statusFontSize',label:'Status Bar',type:'num',min:6,max:72,step:1},
     {key:'landmarkFontSize',label:'Landmarks',type:'num',min:6,max:72,step:1},
     {key:'transitionFontSize',label:'Transitions',type:'num',min:6,max:72,step:1},
@@ -367,38 +484,65 @@ const settingsDef = [
     {key:'landmarkColor',label:'Landmark',type:'color'},
     {key:'watchedColor',label:'Watched Entity',type:'color'},
   ]},
-  {section:'Terrain',items:[
-    {key:'terrainOpacity',label:'Opacity',type:'num',min:0,max:1,step:0.05},
-    {key:'terrainColor',label:'Color',type:'color'},
+  {section:'Terrain / Map Outline',items:[
+    {key:'terrainOpacity',label:'Overlay Opacity',type:'num',min:0,max:1,step:0.05},
+    {key:'terrainEdgeColor',label:'Edge Color',type:'color'},
+    {key:'terrainEdgeAlpha',label:'Edge Opacity',type:'num',min:0.1,max:1,step:0.05},
+    {key:'terrainInteriorAlpha',label:'Interior Opacity',type:'num',min:0,max:0.5,step:0.02},
+  ]},
+  {section:'Performance',items:[
+    {key:'fpsCap',label:'FPS Cap (15-360, lower = less CPU)',type:'num',min:15,max:360,step:5},
   ]},
   {section:'Calibration',items:[
+    {key:'resetCalibrationOnZoneChange',label:'Auto-reset on zone change',type:'bool'},
     {key:'offsetX',label:'Offset X',type:'num',min:-50,max:50,step:0.5},
     {key:'offsetY',label:'Offset Y',type:'num',min:-50,max:50,step:0.5},
     {key:'scaleMul',label:'Scale',type:'num',min:0.3,max:3,step:0.02},
   ]},
-  {section:'Minimap',items:[
-    {key:'showMinimap',label:'Show Minimap (when big map closed)',type:'bool'},
-    {key:'minimapSize',label:'Size (px)',type:'num',min:100,max:500,step:10},
-    {key:'minimapScale',label:'Zoom',type:'num',min:0.1,max:2,step:0.05},
-    {key:'minimapOpacity',label:'Opacity',type:'num',min:0.2,max:1,step:0.05},
-    {key:'minimapPosition',label:'Corner',type:'text'},
-  ]},
   {section:'Exploration Fog',items:[
     {key:'showExplorationFog',label:'Show Unexplored Fog',type:'bool'},
     {key:'fogOpacity',label:'Fog Darkness',type:'num',min:0.1,max:0.9,step:0.05},
+    {key:'fogGridStep',label:'Fog Resolution (lower = sharper, more CPU)',type:'num',min:1,max:8,step:1},
+    {key:'fogCellScale',label:'Fog Cell Size',type:'num',min:0.05,max:0.3,step:0.01},
   ]},
-  {section:'Junk Filter',items:[
-    {key:'hideJunkEntities',label:'Hide Junk (attachments, mods, fx, cosmetics)',type:'bool'},
+  {section:'Map Drawing',items:[
+    {key:'mapCenterYShift',label:'Map Center Y Shift',type:'num',min:-100,max:100,step:1},
+    {key:'playerBlipSize',label:'Player Blip Size (map)',type:'num',min:1,max:15,step:0.5},
+
+    {key:'landmarkIconSize',label:'Landmark Icon Size',type:'num',min:1,max:15,step:0.5},
+    {key:'pathEndMarkerSize',label:'Path End Marker Size',type:'num',min:1,max:15,step:0.5},
+    {key:'clickInspectDistance',label:'Click Inspect Distance (px)',type:'num',min:10,max:100,step:5},
+  ]},
+  {section:'Boss Highlight',items:[
+    {key:'showBossHighlight',label:'Highlight Bosses (large star icon)',type:'bool'},
+    {key:'bossDotSize',label:'Boss Dot Size',type:'num',min:3,max:15,step:0.5},
+  ]},
+  {section:'Nameplate HP Bars',items:[
+    {key:'showNameplates',label:'Show HP Bars',type:'bool'},
+    {key:'nameplateBarWidth',label:'Bar Width Scale',type:'num',min:0.3,max:3,step:0.1},
+    {key:'nameplateBarHeight',label:'Bar Height (px)',type:'num',min:1,max:20,step:1},
+    {key:'nameplateOffsetY',label:'Y Offset (negative = above)',type:'num',min:-100,max:50,step:1},
+    {key:'nameplateFontSize',label:'Name Font Size',type:'num',min:6,max:30,step:1},
   ]},
   {section:'Pathfinding',items:[
     {key:'showPath',label:'Enable Pathfinding',type:'bool'},
+    {key:'showGroundWaypoints',label:'Show Ground Waypoints (when map closed)',type:'bool'},
     {key:'pathTarget',label:'Target Pattern',type:'text'},
     {key:'pathColor',label:'Path Color',type:'color'},
     {key:'pathWidth',label:'Path Width',type:'num',min:0.5,max:8,step:0.5},
+    {key:'pathMaxNodes',label:'Max Nodes (higher = longer paths, more CPU)',type:'num',min:50000,max:2000000,step:50000},
   ]},
   {section:'Auto-Flask',items:[
     {key:'hpThreshold',label:'HP Threshold %',type:'num',min:5,max:95,step:5},
     {key:'manaThreshold',label:'Mana Threshold %',type:'num',min:5,max:95,step:5},
+    {key:'flaskLifeKey',label:'Life Flask Key (VK code, 0x31=1)',type:'num',min:0,max:255,step:1},
+    {key:'flaskManaKey',label:'Mana Flask Key (VK code, 0x32=2)',type:'num',min:0,max:255,step:1},
+    {key:'flaskLifeCooldownMs',label:'Life Flask Cooldown (ms)',type:'num',min:500,max:10000,step:100},
+    {key:'flaskManaCooldownMs',label:'Mana Flask Cooldown (ms)',type:'num',min:500,max:10000,step:100},
+  ]},
+  {section:'Auto-Logout (kill game on low HP)',items:[
+    {key:'autoLogoutEnabled',label:'Enable Auto-Logout',type:'bool'},
+    {key:'autoLogoutHpThreshold',label:'HP Threshold % (quit at or below)',type:'num',min:5,max:80,step:5},
   ]},
 ];
 
@@ -406,7 +550,9 @@ async function loadSettings(){
   settings=await(await fetch('/api/settings')).json();
   let html='';
   for(const sec of settingsDef){
-    html+=`<div class="section"><h3>${sec.section}</h3>`;
+    const collapsed=sec.section.startsWith('Game Tweaks')||sec.section==='DevTest';
+    const sid='sec_'+sec.section.replace(/[^a-zA-Z]/g,'');
+    html+=`<div class="section"><h3 style="cursor:pointer;user-select:none" onclick="document.getElementById('${sid}').style.display=document.getElementById('${sid}').style.display==='none'?'':'none'">${collapsed?'▶':'▼'} ${sec.section}</h3><div id="${sid}" style="${collapsed?'display:none':''}">`;
     for(const item of sec.items){
       const v=settings[item.key]??'';
       html+=`<div class="setting-row"><label>${item.label}</label>`;
@@ -422,7 +568,7 @@ async function loadSettings(){
           <span class="val">${v}</span>`;
       html+=`</div>`;
     }
-    html+=`</div>`;
+    html+=`</div></div>`;
   }
   $('settingsBody').innerHTML=html;
 }
@@ -430,6 +576,27 @@ function setSetting(key,val){settings[key]=val;}
 async function saveSettings(){
   await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
   $('savedMsg').classList.add('show');setTimeout(()=>$('savedMsg').classList.remove('show'),1500);
+}
+function exportSettings(){
+  const blob=new Blob([JSON.stringify(settings,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='radar_settings.json';a.click();
+}
+async function importSettings(e){
+  const file=e.target.files[0];if(!file)return;
+  const text=await file.text();
+  try{
+    const imported=JSON.parse(text);
+    await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(imported)});
+    await loadSettings();
+    $('savedMsg').textContent='Imported!';$('savedMsg').classList.add('show');setTimeout(()=>{$('savedMsg').classList.remove('show');$('savedMsg').textContent='Saved!';},2000);
+  }catch(ex){alert('Invalid settings file: '+ex.message)}
+  e.target.value='';
+}
+async function resetSettings(){
+  if(!confirm('Reset ALL settings to defaults? This cannot be undone.'))return;
+  await fetch('/api/settings/reset',{method:'POST'});
+  await loadSettings();
+  $('savedMsg').textContent='Reset!';$('savedMsg').classList.add('show');setTimeout(()=>{$('savedMsg').classList.remove('show');$('savedMsg').textContent='Saved!';},2000);
 }
 
 // ── AUTO-SKILLS ──
@@ -455,8 +622,16 @@ async function refreshRules(){
       <span style="color:#78b4ff;font-size:12px">Key: ${vkName(r.key)}</span>
       <span style="color:#aaa;font-size:11px">CD: ${r.cooldownSec}s</span>
       ${r.hpBelow?`<span style="color:#f88;font-size:11px">HP&lt;${r.hpBelow}%</span>`:''}
+      ${r.hpAbove?`<span style="color:#f88;font-size:11px">HP&gt;${r.hpAbove}%</span>`:''}
       ${r.manaBelow?`<span style="color:#88f;font-size:11px">Mana&lt;${r.manaBelow}%</span>`:''}
+      ${r.esBelow?`<span style="color:#8ff;font-size:11px">ES&lt;${r.esBelow}%</span>`:''}
       ${r.enemiesNearby?`<span style="color:#ff8;font-size:11px">Enemies&ge;${r.enemiesNearby}</span>`:''}
+      ${r.bossNearby===true?'<span style="color:#f80;font-size:11px">Boss nearby</span>':''}
+      ${r.bossNearby===false?'<span style="color:#888;font-size:11px">No boss</span>':''}
+      ${r.waitSec?`<span style="color:#8f8;font-size:11px">Wait ${r.waitSec}s</span>`:''}
+      ${r.requireKeyHeld?`<span style="color:#c8f;font-size:11px">Hold:${vkName(r.requireKeyHeld)}</span>`:''}
+      ${r.playerMoving===true?'<span style="color:#aaf;font-size:11px">Moving</span>':''}
+      ${r.playerMoving===false?'<span style="color:#aaf;font-size:11px">Standing</span>':''}
       <button class="btn btn-rm" style="margin-left:auto" onclick="deleteRule(${i})">X</button>
     </div>`
   ).join('')||'<div style="color:#666;padding:8px">No rules. Add one below.</div>';
@@ -475,10 +650,18 @@ async function addRule(){
   const cd=parseFloat($('ruleAddCd').value)||2;
   const hp=$('ruleAddHp').value?parseFloat($('ruleAddHp').value):null;
   const mana=$('ruleAddMana').value?parseFloat($('ruleAddMana').value):null;
+  const es=$('ruleAddEs').value?parseFloat($('ruleAddEs').value):null;
   const enemies=$('ruleAddEnemies').value?parseInt($('ruleAddEnemies').value):null;
+  const bossVal=$('ruleAddBoss').value;
+  const boss=bossVal==='true'?true:bossVal==='false'?false:null;
+  const wait=$('ruleAddWait').value?parseFloat($('ruleAddWait').value):null;
+  const holdKeyStr=$('ruleAddHoldKey').value;
+  const holdKey=holdKeyStr?parseKey(holdKeyStr):null;
+  const movingVal=$('ruleAddMoving').value;
+  const moving=movingVal==='true'?true:movingVal==='false'?false:null;
   await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name,key,enabled:true,cooldownSec:cd,hpBelow:hp,manaBelow:mana,enemiesNearby:enemies})});
-  $('ruleAddName').value='';$('ruleAddKey').value='';refreshRules();
+    body:JSON.stringify({name,key,enabled:true,cooldownSec:cd,hpBelow:hp,manaBelow:mana,esBelow:es,enemiesNearby:enemies,bossNearby:boss,waitSec:wait,requireKeyHeld:holdKey,playerMoving:moving})});
+  $('ruleAddName').value='';$('ruleAddKey').value='';$('ruleAddHoldKey').value='';refreshRules();
 }
 
 // ── PATHING ──
@@ -518,10 +701,363 @@ async function refreshLandmarks(){landmarks=await(await fetch('/landmarks')).jso
 function filterLandmarks(){
   const s=($('lmSearch')?.value||'').toLowerCase();
   $('lmBody').innerHTML=landmarks.filter(l=>!s||l.name.toLowerCase().includes(s)||l.path.toLowerCase().includes(s))
-    .map(l=>`<tr><td>${l.name}</td><td class="meta-short" title="${l.path}">${l.path}</td><td>${l.tiles}</td><td>${l.dist}</td></tr>`).join('');
+    .map(l=>`<tr><td>${l.name}</td><td class="meta-short" title="${l.path}">${l.path}</td><td>${l.tiles}</td><td>${l.dist}</td>
+      <td><button class="btn" style="background:#4a3a1a;color:#fa0" onclick="hideFromLandmark('${esc(l.name)}','${esc(l.path)}')">Hide</button></td></tr>`).join('');
 }
 
-refresh();refreshWatched();setInterval(refresh,2000);
+// ── DevTest ──
+const devtestDef = [
+  {section:'Rendering (game memory writes)',items:[
+    {key:'tweakHideNormalLifeBars',label:'Hide Normal Monster HP Bars',type:'bool'},
+    {key:'tweakHideMagicLifeBars',label:'Hide Normal+Magic HP Bars',type:'bool'},
+    {key:'tweakHideAllLifeBars',label:'Hide ALL Monster HP Bars',type:'bool'},
+    {key:'tweakHideBuffVisuals',label:'Hide Buff/Debuff VFX',type:'bool'},
+    {key:'tweakHideNormalRendering',label:'Make Normal Monsters Invisible',type:'bool'},
+    {key:'tweakForceShowHover',label:'Force Hover Highlight',type:'bool'},
+    {key:'tweakDisableSelectionBoxes',label:'Disable Selection Boxes',type:'bool'},
+    {key:'tweakHideInfoDisplay',label:'Hide Info Tooltips',type:'bool'},
+    {key:'tweakHideTalismanIcons',label:'Hide Overhead Icons',type:'bool'},
+    {key:'tweakForceOutline',label:'Force Outline Glow',type:'bool'},
+  ]},
+  {section:'Physics & Collision',items:[
+    {key:'tweakDisableMonsterBlocking',label:'Disable Monster Collision',type:'bool'},
+    {key:'tweakDisableMonsterPush',label:'Disable Push',type:'bool'},
+    {key:'tweakEnablePhaseThrough',label:'Phase Through Terrain',type:'bool'},
+  ]},
+  {section:'Targeting',items:[
+    {key:'tweakForceAllTargetable',label:'Force All Targetable',type:'bool'},
+    {key:'tweakForceAllAttackable',label:'Force All Attackable',type:'bool'},
+  ]},
+  {section:'Behavior',items:[
+    {key:'tweakFreezeNormalMonsters',label:'Freeze Normals (speed=0)',type:'bool'},
+    {key:'tweakPreventCorpseSinking',label:'Prevent Corpse Sinking',type:'bool'},
+  ]},
+  {section:'World Interaction',items:[
+    {key:'tweakInstantTransitions',label:'Instant Zone Transitions',type:'bool'},
+    {key:'tweakUnblockDoors',label:'Unblock Doors',type:'bool'},
+    {key:'tweakUnlockChests',label:'Unlock Chests',type:'bool'},
+    {key:'tweakOpenChestsOnDamage',label:'Open Chests on Damage',type:'bool'},
+  ]},
+  {section:'Entity Manipulation',items:[
+    {key:'tweakSwapTeamToFriendly',label:'Make Monsters Friendly',type:'bool'},
+    {key:'tweakMakeAllBoss',label:'Flag All as Boss',type:'bool'},
+    {key:'tweakRemoveBossFlag',label:'Remove Boss Flag',type:'bool'},
+    {key:'tweakEntityScale',label:'Scale Override (0=off)',type:'num',min:0,max:5,step:0.1},
+    {key:'tweakEntityColorR',label:'Tint R (-1=off)',type:'num',min:-1,max:2,step:0.1},
+    {key:'tweakEntityColorG',label:'Tint G (-1=off)',type:'num',min:-1,max:2,step:0.1},
+    {key:'tweakEntityColorB',label:'Tint B (-1=off)',type:'num',min:-1,max:2,step:0.1},
+    {key:'tweakLabelViewDistance',label:'Label Distance (0=off)',type:'num',min:0,max:500,step:10},
+  ]},
+  {section:'Scope',items:[
+    {key:'tweakApplyToNpcs',label:'Apply to NPCs',type:'bool'},
+    {key:'tweakApplyToChests',label:'Apply to Chests',type:'bool'},
+  ]},
+  {section:'Raw Field Writes (very experimental)',items:[
+    {key:'tweakDevHideHover',label:'Hide Hover',type:'bool'},
+    {key:'tweakDevFadeArrows',label:'Fade Arrows',type:'bool'},
+    {key:'tweakDevDisableLight',label:'Disable Lights',type:'bool'},
+    {key:'tweakDevFixedSelectionSize',label:'Fixed Selection Size',type:'bool'},
+    {key:'tweakDevBBoxIgnoreGround',label:'BBox Ignore Ground',type:'bool'},
+    {key:'tweakDevFaceWindDirection',label:'Face Wind',type:'bool'},
+    {key:'tweakDevDampenHeight',label:'Dampen Height',type:'bool'},
+    {key:'tweakDevHeightOffset',label:'Height Offset',type:'num',min:-200,max:200,step:5},
+    {key:'tweakDevSelectionHeightOverride',label:'Selection Height',type:'num',min:0,max:500,step:10},
+    {key:'tweakDevLockOrientation',label:'Lock Orientation',type:'bool'},
+    {key:'tweakDevMakeFlying',label:'Make Flying',type:'bool'},
+    {key:'tweakDevMakeStatic',label:'Make Static',type:'bool'},
+    {key:'tweakDevFaceMovementDir',label:'Face Movement Dir',type:'bool'},
+    {key:'tweakDevAvoidOthers',label:'Disable Avoidance',type:'bool'},
+    {key:'tweakDevLockAnimation',label:'Lock Animation',type:'bool'},
+    {key:'tweakDevCorpseUsable',label:'Corpse Usable',type:'bool'},
+    {key:'tweakDevNoCorpseMarker',label:'No Corpse Marker',type:'bool'},
+  ]},
+];
+function loadDevTest(){
+  let html='';
+  for(const sec of devtestDef){
+    html+=`<div class="section"><h3 style="color:#f88">${sec.section}</h3>`;
+    for(const item of sec.items){
+      const v=settings[item.key]??'';
+      html+=`<div class="setting-row"><label>${item.label}</label>`;
+      if(item.type==='bool')
+        html+=`<input type="checkbox" ${v?'checked':''} onchange="setSetting('${item.key}',this.checked)">`;
+      else if(item.type==='num')
+        html+=`<input type="range" min="${item.min}" max="${item.max}" step="${item.step}" value="${v}"
+          oninput="setSetting('${item.key}',parseFloat(this.value));this.nextElementSibling.textContent=this.value">
+          <span class="val">${v}</span>`;
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  }
+  $('devtestBody').innerHTML=html;
+}
+
+// ── Game Data ──
+let gdData=[], gdMode='areas';
+async function loadGdAreas(){
+  gdMode='areas';
+  const s=$('gdSearch')?.value||'';
+  gdData=await(await fetch(`/api/gamedata/areas?search=${encodeURIComponent(s)}`)).json();
+  renderGd();
+}
+async function loadGdBuffs(){
+  gdMode='buffs';
+  const s=$('gdSearch')?.value||'';
+  gdData=await(await fetch(`/api/gamedata/buffs?search=${encodeURIComponent(s)}&limit=500`)).json();
+  renderGd();
+}
+async function loadGdPins(){
+  gdMode='pins';
+  const data=await(await fetch('/api/gamedata/pins')).json();
+  gdData=data.pins||[];
+  $('gdResults').innerHTML=`<h3 style="color:#0af">${data.area} — ${gdData.length} pins</h3>`+
+    (gdData.length?`<table style="width:100%"><thead><tr><th>Name</th><th>ID</th><th>Type</th></tr></thead><tbody>`+
+    gdData.map(p=>`<tr><td>${p.name}</td><td style="color:#888">${p.id}</td><td>${p.type}</td></tr>`).join('')+
+    '</tbody></table>':'<p style="color:#888">No map pins for this zone</p>');
+}
+function searchGameData(){
+  if(gdMode==='areas')loadGdAreas();
+  else if(gdMode==='buffs')loadGdBuffs();
+}
+function renderGd(){
+  if(gdMode==='areas'){
+    $('gdResults').innerHTML=`<p style="color:#888">${gdData.length} areas</p><table style="width:100%"><thead><tr><th>Code</th><th>Name</th><th>Act</th><th>Lvl</th><th>Town</th><th>WP</th></tr></thead><tbody>`+
+      gdData.map(a=>`<tr><td style="color:#0af">${a.code}</td><td>${a.name}</td><td>${a.act}</td><td>${a.level}</td><td>${a.town?'Yes':''}</td><td>${a.waypoint?'Yes':''}</td></tr>`).join('')+
+      '</tbody></table>';
+  } else if(gdMode==='buffs'){
+    $('gdResults').innerHTML=`<p style="color:#888">${gdData.length} buffs</p><table style="width:100%"><thead><tr><th>ID</th><th>Name</th><th>Description</th></tr></thead><tbody>`+
+      gdData.map(b=>`<tr><td style="color:#888;font-size:10px">${b.id}</td><td style="color:#0af">${b.name}</td><td style="font-size:11px">${b.description||''}</td></tr>`).join('')+
+      '</tbody></table>';
+  }
+}
+
+// ── MINIMAP ──
+const minimapDef = [
+  {section:'General',items:[
+    {key:'showMinimap',label:'Show Minimap (when big map closed)',type:'bool'},
+    {key:'minimapSize',label:'Size (px)',type:'num',min:100,max:500,step:10},
+    {key:'minimapScale',label:'Zoom',type:'num',min:0.1,max:2,step:0.05},
+    {key:'minimapOpacity',label:'Opacity',type:'num',min:0.2,max:1,step:0.05},
+    {key:'minimapPosition',label:'Corner (topleft, topright, bottomleft, bottomright)',type:'text'},
+    {key:'minimapOffsetX',label:'Offset X (px)',type:'num',min:-2000,max:2000,step:5},
+    {key:'minimapOffsetY',label:'Offset Y (px)',type:'num',min:-2000,max:2000,step:5},
+    {key:'minimapPlayerBlipSize',label:'Player Blip Size',type:'num',min:1,max:10,step:0.5},
+    {key:'minimapDotScale',label:'Dot Scale (all dots)',type:'num',min:0.3,max:3,step:0.1},
+  ]},
+  {section:'Entity Dots — Show/Hide',items:[
+    {key:'minimapShowMonsters',label:'Show Monsters',type:'bool'},
+    {key:'minimapShowBosses',label:'Show Bosses (large dot)',type:'bool'},
+    {key:'minimapShowNpcs',label:'Show NPCs',type:'bool'},
+    {key:'minimapShowChests',label:'Show Chests',type:'bool'},
+    {key:'minimapShowTransitions',label:'Show Transitions',type:'bool'},
+    {key:'minimapShowTerrain',label:'Show Terrain',type:'bool'},
+    {key:'minimapShowPath',label:'Show Path Line',type:'bool'},
+  ]},
+  {section:'Labels — Show/Hide',items:[
+    {key:'minimapLabelBoss',label:'Label: Bosses',type:'bool'},
+    {key:'minimapLabelUnique',label:'Label: Unique Monsters',type:'bool'},
+    {key:'minimapLabelTransition',label:'Label: Transitions / Exits',type:'bool'},
+    {key:'minimapLabelNpc',label:'Label: POI NPCs',type:'bool'},
+    {key:'minimapLabelWatched',label:'Label: Watched Entities',type:'bool'},
+    {key:'minimapLabelFontSize',label:'Label Font Size',type:'num',min:6,max:36,step:1},
+  ]},
+];
+async function loadMinimapSettings(){
+  if(!settings||!Object.keys(settings).length) settings=await(await fetch('/api/settings')).json();
+  let html='';
+  for(const sec of minimapDef){
+    html+=`<div class="section"><h3>${sec.section}</h3>`;
+    for(const item of sec.items){
+      const v=settings[item.key]??'';
+      html+=`<div class="setting-row"><label>${item.label}</label>`;
+      if(item.type==='bool')
+        html+=`<input type="checkbox" ${v?'checked':''} onchange="setSetting('${item.key}',this.checked)">`;
+      else if(item.type==='color')
+        html+=`<input type="color" value="${v}" onchange="setSetting('${item.key}',this.value)">`;
+      else if(item.type==='text')
+        html+=`<input type="text" value="${v||''}" style="width:250px" onchange="setSetting('${item.key}',this.value)">`;
+      else if(item.type==='num')
+        html+=`<input type="range" min="${item.min}" max="${item.max}" step="${item.step}" value="${v}"
+          oninput="setSetting('${item.key}',parseFloat(this.value));this.nextElementSibling.textContent=this.value">
+          <span class="val">${v}</span>`;
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  }
+  $('minimapSettingsBody').innerHTML=html;
+}
+
+// ── HIDDEN ENTITIES ──
+let hiddenPatterns=[];
+async function refreshHidden(){
+  hiddenPatterns=await(await fetch('/api/hidden')).json();
+  $('hiddenList').innerHTML=hiddenPatterns.map(p=>
+    `<div class="watched-item">
+      <span style="font-family:monospace;font-size:13px;color:#fa0;flex:1">${p}</span>
+      <button class="btn btn-rm" onclick="removeHidden('${esc(p)}')">X</button>
+    </div>`
+  ).join('')||'<div style="color:#666;padding:8px">No hidden patterns. Everything is visible on the radar.</div>';
+}
+async function addHidden(){
+  const p=$('hiddenAddPattern').value.trim();
+  if(!p)return;
+  await fetch('/api/hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:p})});
+  $('hiddenAddPattern').value='';
+  refreshHidden();refresh();
+}
+async function removeHidden(pattern){
+  await fetch('/api/hidden?pattern='+encodeURIComponent(pattern),{method:'DELETE'});
+  refreshHidden();refresh();
+}
+function hideFromEntity(meta){
+  const parts=meta.split('/');
+  const short=parts[parts.length-1].replace(/@\d+$/,'');
+  const pattern=prompt('Hide pattern (entities matching this will be hidden from the radar):',short);
+  if(pattern===null||!pattern.trim())return;
+  fetch('/api/hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:pattern.trim()})})
+    .then(()=>{refresh();});
+}
+function hideFromLandmark(name,path){
+  const pattern=prompt('Hide pattern (landmarks matching this will be hidden from the radar):',name);
+  if(pattern===null||!pattern.trim())return;
+  fetch('/api/hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:pattern.trim()})})
+    .then(()=>{refreshLandmarks();});
+}
+
+function inspectFromList(addr){
+  showTab('inspector');
+  setTimeout(()=>{
+    $('inspEntity').value=addr;
+    inspSelectedAddr=addr;
+    inspectEntity();
+  },100);
+}
+
+// ── Inspector ──
+let inspEntities=[], inspTimer=null, inspSelectedAddr='';
+async function loadInspectorEntities(){
+  try{
+    const data=await(await fetch('/entities?limit=999')).json();
+    inspEntities=data;
+    const sel=$('inspEntity');
+    sel.innerHTML='<option value="">-- Select entity --</option>'+
+      data.map(e=>`<option value="${e.addr}">[${e.category}] ${e.name||e.metadata.split('/').pop()} (${e.addr})${e.boss?' ★':''}${e.locked?' 🔒':''}</option>`).join('');
+    $('inspStatus').textContent=`${data.length} entities`;
+  }catch(ex){$('inspStatus').textContent='Error: '+ex.message}
+}
+let inspSchema={};
+async function loadInspectorSchema(){
+  try{
+    const comps=await(await fetch('/api/inspect/components')).json();
+    if(Array.isArray(comps)){
+      for(const c of comps){
+        const s=await(await fetch(`/api/inspect/schema?component=${c.name}`)).json();
+        if(s.fields) inspSchema[c.name]={};
+        for(const f of (s.fields||[])) inspSchema[c.name][f.name]={offset:f.offset,type:f.type,verified:f.verified,notes:f.notes};
+      }
+    }
+  }catch{}
+}
+async function inspectEntity(){
+  const addr=$('inspEntity').value;
+  if(!addr){$('inspResults').innerHTML='';$('inspComponents').innerHTML='';return}
+  inspSelectedAddr=addr;
+  try{
+    const data=await(await fetch(`/api/inspect?entity=${addr}`)).json();
+    if(data.error){$('inspResults').innerHTML=`<p style="color:#f66">${data.error}</p>`;return}
+    const comps=Object.keys(data.components||{});
+    const compCount=comps.length;
+    const fieldCount=comps.reduce((s,c)=>s+Object.keys(data.components[c]||{}).length,0);
+    $('inspComponents').innerHTML=`<span style="color:#888;font-size:11px">${compCount} components, ${fieldCount} fields</span> `+
+      comps.map(c=>`<span style="background:#333;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px" onclick="scrollToComp('${c}')">${c}</span>`).join('');
+    let html='';
+    for(const[name,fields]of Object.entries(data.components||{})){
+      const fc=Object.keys(fields||{}).length;
+      html+=`<h3 id="insp-${name}" style="margin:12px 0 4px;color:#0af">${name} <span style="color:#666;font-size:11px">(${fc} fields)</span></h3>`;
+      const schema=inspSchema[name]||{};
+      html+='<table style="width:100%"><thead><tr><th style="text-align:left">Field</th><th>Offset</th><th>Type</th><th>Value</th></tr></thead><tbody>';
+      for(const[fn,fv]of Object.entries(fields||{})){
+        const s=schema[fn]||{};
+        const nonZero=fv!==null&&fv!==0&&fv!==false;
+        const style=nonZero?'color:#eee':'color:#555';
+        const val=fv===null?'<span style="color:#444">null</span>':typeof fv==='object'?`<span style="color:#8af">${JSON.stringify(fv)}</span>`:`<b style="${style}">${fv}</b>`;
+        const verified=s.verified?'<span style="color:#4f4" title="Verified">&#10003;</span>':'';
+        const notes=s.notes?` <span style="color:#666;font-size:10px" title="${s.notes}">[?]</span>`:'';
+        html+=`<tr><td style="color:#aaa">${fn}${verified}${notes}</td><td style="color:#666;font-size:10px">${s.offset||''}</td><td style="color:#666;font-size:10px">${s.type||''}</td><td>${val}</td></tr>`;
+      }
+      html+='</tbody></table>';
+    }
+    $('inspResults').innerHTML=html||'<p style="color:#888">No components resolved (entity may be out of range)</p>';
+  }catch(ex){$('inspResults').innerHTML=`<p style="color:#f66">${ex.message}</p>`}
+}
+function scrollToComp(name){const el=document.getElementById('insp-'+name);if(el)el.scrollIntoView({behavior:'smooth'})}
+function inspAutoTick(){
+  if($('inspAutoRefresh')?.checked && inspSelectedAddr && document.getElementById('tab-inspector')?.classList.contains('active'))
+    inspectEntity();
+}
+
+// ── KEYBINDS ──
+const keybindsDef=[
+  {key:'keyCheat1',label:'Cheat: No Atlas Fog',def:0x70},
+  {key:'keyCheat2',label:'Cheat: Reveal Map',def:0x71},
+  {key:'keyCheat3',label:'Cheat: Infinite Zoom',def:0x72},
+  {key:'keyCheat4',label:'Cheat: Enemy HP Bars',def:0x73},
+  {key:'keyCheat5',label:'Cheat: Light Radius',def:0x74},
+  {key:'keyCycleLandmarks',label:'Cycle Landmarks (path-to)',def:0x75},
+  {key:'keyCycleEntities',label:'Cycle Entities (path-to)',def:0x76},
+  {key:'keyAutoFlask',label:'Toggle Auto-Flask',def:0x77},
+  {key:'keySettings',label:'Open Settings Panel',def:0x78},
+  {key:'keyToggleOverlay',label:'Toggle Overlay Visibility',def:0x79},
+  {key:'keyDashboard',label:'Open Dashboard',def:0x7A},
+];
+const VK_DISPLAY={0x70:'F1',0x71:'F2',0x72:'F3',0x73:'F4',0x74:'F5',0x75:'F6',0x76:'F7',0x77:'F8',0x78:'F9',0x79:'F10',0x7A:'F11',0x7B:'F12',
+  0x31:'1',0x32:'2',0x33:'3',0x34:'4',0x35:'5',0x36:'6',0x37:'7',0x38:'8',0x39:'9',0x30:'0',
+  0x41:'A',0x42:'B',0x43:'C',0x44:'D',0x45:'E',0x46:'F',0x47:'G',0x48:'H',0x49:'I',0x4A:'J',
+  0x4B:'K',0x4C:'L',0x4D:'M',0x4E:'N',0x4F:'O',0x50:'P',0x51:'Q',0x52:'R',0x53:'S',0x54:'T',
+  0x55:'U',0x56:'V',0x57:'W',0x58:'X',0x59:'Y',0x5A:'Z',
+  0x60:'Num0',0x61:'Num1',0x62:'Num2',0x63:'Num3',0x64:'Num4',0x65:'Num5',0x66:'Num6',0x67:'Num7',0x68:'Num8',0x69:'Num9',
+  0x6A:'Num*',0x6B:'Num+',0x6D:'Num-',0x6E:'Num.',0x6F:'Num/',
+  0xBE:'.',0xBC:',',0xBA:';',0xBF:'/',0xC0:'`',0xDB:'[',0xDD:']',0xDC:'\\\\',0xDE:"'",0xBD:'-',0xBB:'='};
+function vkDisplay(code){return VK_DISPLAY[code]||('0x'+code.toString(16).toUpperCase());}
+function loadKeybinds(){
+  if(!settings||!Object.keys(settings).length)return;
+  let html='';
+  const seen={};
+  for(const kb of keybindsDef){
+    const vk=settings[kb.key]??kb.def;
+    if(seen[vk])seen[vk].push(kb.key);else seen[vk]=[kb.key];
+  }
+  for(const kb of keybindsDef){
+    const vk=settings[kb.key]??kb.def;
+    const dup=seen[vk]&&seen[vk].length>1;
+    html+=`<div class="setting-row">
+      <label>${kb.label}</label>
+      <input type="text" readonly value="${vkDisplay(vk)}" id="kb_${kb.key}"
+        style="width:80px;text-align:center;cursor:pointer;background:#1e1e28;border:1px solid ${dup?'#f55':'#555'};color:#78b4ff;font-weight:bold"
+        onfocus="this.value='... press key ...';this.style.borderColor='#78b4ff'"
+        onkeydown="captureKey(event,'${kb.key}');return false"
+        onblur="this.value=vkDisplay(settings['${kb.key}']??${kb.def});this.style.borderColor='#555'">
+      <span style="color:#666;font-size:11px;margin-left:8px">VK: 0x${vk.toString(16).toUpperCase()}</span>
+      ${dup?'<span style="color:#f55;font-size:11px;margin-left:4px">duplicate!</span>':''}
+    </div>`;
+  }
+  $('keybindsBody').innerHTML=html;
+}
+function captureKey(e,settingKey){
+  e.preventDefault();e.stopPropagation();
+  const vk=e.keyCode;
+  settings[settingKey]=vk;
+  const el=$('kb_'+settingKey);
+  el.value=vkDisplay(vk);
+  el.style.borderColor='#5f5';
+  setTimeout(()=>{el.style.borderColor='#555';el.blur();loadKeybinds();},300);
+}
+async function saveKeybinds(){
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
+  $('kbSavedMsg').classList.add('show');setTimeout(()=>$('kbSavedMsg').classList.remove('show'),1500);
+}
+
+refresh();refreshWatched();setInterval(refresh,2000);setInterval(inspAutoTick,2000);
 </script></body></html>
 """;
 }
