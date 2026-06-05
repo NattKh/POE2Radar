@@ -21,10 +21,29 @@ public sealed class Poe2Live
     private readonly Dictionary<nint, nint> _posAddr = new();      // entity → Positioned component (0 = none)
     private readonly Dictionary<nint, nint> _ompAddr = new();      // entity → ObjectMagicProperties (0 = none)
     private readonly Dictionary<nint, nint> _chestAddr = new();    // entity → Chest component (0 = none)
+    private readonly Dictionary<nint, nint> _monsterAddr = new();  // entity → Monster component (0 = none)
+    private readonly Dictionary<nint, nint> _targetableAddr = new(); // entity → Targetable component (0 = none)
+    private readonly Dictionary<nint, nint> _pathfindingAddr = new(); // entity → Pathfinding component (0 = none)
     private readonly Dictionary<nint, EntityCategory> _category = new();
     private readonly Dictionary<nint, string> _meta = new();
-    private readonly Dictionary<nint, bool> _hasIcon = new();      // entity has a MinimapIcon component (game POI)
+    private readonly Dictionary<nint, nint> _iconAddr = new();     // entity → MinimapIcon component (0 = none); game POI
+    private readonly Dictionary<nint, uint> _idAt = new();         // entity address → last-seen std::map key id (recycle guard)
     private nint _entCacheKey;   // AreaInstance address the entity caches were built for
+
+    // Reused across Entities() calls to avoid per-tick allocations. The std::map walk reads each
+    // 48-byte node in ONE ReadProcessMemory (fields are contiguous), not 5 separate syscalls.
+    private readonly Queue<nint> _entQueue = new();
+    private readonly HashSet<nint> _entVisited = new();
+    private readonly byte[] _nodeBuf = new byte[0x30];
+    // Reused camera-matrix buffers (read every render frame).
+    private readonly byte[] _camBytes = new byte[64];
+    private readonly float[] _camMatrix = new float[16];
+
+    // Persistent entity cache: remembers positions of important entities (transitions, NPCs, etc.)
+    // so they stay visible on the radar after leaving the network bubble. Keyed by entity ID.
+    private readonly Dictionary<uint, EntityDot> _persistentCache = new();
+    private nint _persistentCacheKey;  // AreaInstance the cache was built for
+    public bool PersistEntities { get; set; } = true;
 
     public Poe2Live(MemoryReader reader, nint gameStateSlot)
     {
@@ -37,22 +56,31 @@ public sealed class Poe2Live
     /// <summary>Monster rarity from ObjectMagicProperties.Rarity. NonMonster = not applicable.</summary>
     public enum Rarity { Normal = 0, Magic = 1, Rare = 2, Unique = 3, NonMonster = -1 }
 
+    public enum LeagueMechanic { None, Expedition, Breach, Ritual, Delirium, Abyss, Incursion, Legion, Betrayal, Ultimatum, Sanctum, Delve, Heist, Blight, Hellscape }
+
     public readonly record struct EntityDot(
         uint Id, nint Address, System.Numerics.Vector2 Grid, Vector3 World, EntityCategory Category, string Metadata,
-        int HpCur, int HpMax, bool Poi, byte Reaction, Rarity Rarity, bool Opened)
+        int HpCur, int HpMax, bool Poi, byte Reaction, Rarity Rarity, bool Opened,
+        bool IsBoss = false, bool IsTargetable = true, bool IsLocked = false, bool IsLarge = false,
+        float Scale = 1f, int BaseSpeed = -1, LeagueMechanic League = LeagueMechanic.None,
+        bool IconComplete = false)
     {
-        /// <summary>Monsters are "alive" only with positive HP; non-life entities are always shown.</summary>
         public bool IsAlive => HpMax <= 0 || HpCur > 0;
         public bool HasLife => HpMax > 0;
-        /// <summary>GameHelper2 rule: friendly when (Reaction &amp; 0x7F) == 1.</summary>
         public bool IsFriendly => (Reaction & 0x7F) == 1;
         public float HpFraction => HpMax > 0 ? Math.Clamp((float)HpCur / HpMax, 0f, 1f) : 1f;
+        public bool IsImmobile => BaseSpeed == 0;
+        public bool IsLeagueMechanic => League != LeagueMechanic.None;
     }
 
     public readonly record struct MapUi(bool IsVisible, float ShiftX, float ShiftY, float Zoom);
+    public readonly record struct MinimapUi(bool Available, float ShiftX, float ShiftY, float Zoom);
 
     /// <summary>A static tile-based landmark: a notable terrain feature and its grid centroid.</summary>
     public readonly record struct Landmark(string Name, string Path, System.Numerics.Vector2 Center, int TileCount);
+
+    /// <summary>A raw tile path entry with grid position (unfiltered, for discovery).</summary>
+    public readonly record struct TilePathEntry(string Path, System.Numerics.Vector2 Center, int TileCount);
 
     public sealed record TerrainData(byte[] Walkable, int Width, int Height);
 
@@ -135,13 +163,42 @@ public sealed class Poe2Live
     /// <summary>Player grid position (from the Render component's world position ÷ grid ratio).</summary>
     public System.Numerics.Vector2? PlayerGrid(nint localPlayer) => EntityGrid(localPlayer);
 
-    public readonly record struct Vitals(int HpCur, int HpUnreserved, int ManaCur, int ManaUnreserved)
+    public readonly record struct Vitals(int HpCur, int HpUnreserved, int ManaCur, int ManaUnreserved, int EsCur, int EsUnreserved)
     {
         public float HpPct   => HpUnreserved   > 0 ? 100f * HpCur   / HpUnreserved   : 100f;
         public float ManaPct => ManaUnreserved > 0 ? 100f * ManaCur / ManaUnreserved : 100f;
+        public float EsPct   => EsUnreserved   > 0 ? 100f * EsCur   / EsUnreserved   : 0f;
     }
 
     private nint _plLife, _plLifeFor;
+
+    // Self-healing vital offsets: if the configured Health offset reads garbage after a patch,
+    // scan the Life component for valid VitalStructs and auto-relocate. Health is safety-critical
+    // (auto-flask); mana degrades safely to "always full" if its offset drifts.
+    private int _healthOff = Poe2.Life.Health, _manaOff = Poe2.Life.Mana, _esOff = Poe2.Life.EnergyShield;
+    private bool _vitalOffsetsResolved;
+
+    private void EnsureVitalOffsets(nint lifeComp)
+    {
+        if (_vitalOffsetsResolved || lifeComp == 0) return;
+        if (_reader.TryReadStruct<VitalStruct>(lifeComp + Poe2.Life.Health, out var h) && h.LooksValid())
+        { _vitalOffsetsResolved = true; return; }
+
+        var found = new List<int>(4);
+        for (var off = 0x80; off <= 0x400 && found.Count < 4;)
+        {
+            if (_reader.TryReadStruct<VitalStruct>(lifeComp + off, out var v) && v.LooksValid())
+            { found.Add(off); off += 0x34; }
+            else off += 4;
+        }
+        if (found.Count == 0) return;
+
+        _vitalOffsetsResolved = true;
+        _healthOff = found[0];
+        if (_healthOff != Poe2.Life.Health)
+            Console.WriteLine($"Poe2Live: Life Health offset drifted — auto-relocated " +
+                $"0x{Poe2.Life.Health:X}->0x{_healthOff:X}. Update Poe2.Life + re-validate (Research --hp).");
+    }
 
     /// <summary>
     /// Local player HP/mana as current vs. *unreserved* max (auras reserve part of the pool, so
@@ -151,9 +208,11 @@ public sealed class Poe2Live
     {
         if (localPlayer != _plLifeFor) { _plLifeFor = localPlayer; _plLife = ResolveComponent(localPlayer, "Life"); }
         if (_plLife == 0) return null;
-        if (!_reader.TryReadStruct<VitalStruct>(_plLife + Poe2.Life.Health, out var hp)) return null;
-        _reader.TryReadStruct<VitalStruct>(_plLife + Poe2.Life.Mana, out var mana);
-        return new Vitals(hp.Current, Unreserved(hp), mana.Current, Unreserved(mana));
+        EnsureVitalOffsets(_plLife);
+        if (!_reader.TryReadStruct<VitalStruct>(_plLife + _healthOff, out var hp) || hp.Max <= 0) return null;
+        _reader.TryReadStruct<VitalStruct>(_plLife + _manaOff, out var mana);
+        _reader.TryReadStruct<VitalStruct>(_plLife + _esOff, out var es);
+        return new Vitals(hp.Current, Unreserved(hp), mana.Current, Unreserved(mana), es.Current, Unreserved(es));
     }
 
     private static int Unreserved(VitalStruct v)
@@ -167,35 +226,57 @@ public sealed class Poe2Live
     /// decorations (id ≥ 0x40000000) are skipped. Render addresses + categories are cached per
     /// entity for the area's lifetime; the per-tick cost is then ~1 pointer read per entity.
     /// </summary>
+    private static bool ShouldPersist(EntityCategory cat) =>
+        cat is EntityCategory.Transition or EntityCategory.Npc or EntityCategory.Chest;
+
     public List<EntityDot> Entities(nint areaInstance)
     {
         if (areaInstance != _entCacheKey)
         {
             _renderAddr.Clear(); _lifeAddr.Clear(); _posAddr.Clear(); _ompAddr.Clear(); _chestAddr.Clear();
-            _category.Clear(); _meta.Clear(); _hasIcon.Clear();
+            _monsterAddr.Clear(); _targetableAddr.Clear(); _pathfindingAddr.Clear();
+            _category.Clear(); _meta.Clear(); _iconAddr.Clear(); _idAt.Clear();
             _entCacheKey = areaInstance;
+        }
+        if (!PersistEntities)
+            _persistentCache.Clear();
+        else if (areaInstance != _persistentCacheKey)
+        {
+            _persistentCache.Clear();
+            _persistentCacheKey = areaInstance;
         }
 
         var dots = new List<EntityDot>(256);
+        var liveIds = new HashSet<uint>();
         var head = Ptr(areaInstance + Poe2.AreaInstance.AwakeEntities);
         _reader.TryReadStruct<int>(areaInstance + Poe2.AreaInstance.AwakeEntities + 8, out var size);
-        if (head == 0 || size <= 0 || size > 100000) return dots;
+        if (head == 0 || size <= 0 || size > 100000) goto merge;
 
         var root = Ptr(head + Poe2.StdMapNode.Parent);
-        var queue = new Queue<nint>(); queue.Enqueue(root);
-        var visited = new HashSet<nint>();
-        while (queue.Count > 0 && visited.Count < 200000)
+        _entQueue.Clear(); _entQueue.Enqueue(root);
+        _entVisited.Clear();
+        while (_entQueue.Count > 0 && _entVisited.Count < 200000)
         {
-            var node = queue.Dequeue();
-            if (node == 0 || node == head || !visited.Add(node)) continue;
-            if (!_reader.TryReadStruct<byte>(node + Poe2.StdMapNode.IsNil, out var nil) || nil != 0) continue;
+            var node = _entQueue.Dequeue();
+            if (node == 0 || node == head || !_entVisited.Add(node)) continue;
 
-            _reader.TryReadStruct<uint>(node + Poe2.StdMapNode.KeyId, out var id);
-            var entity = Ptr(node + Poe2.StdMapNode.ValueEntityPtr);
-            queue.Enqueue(Ptr(node + Poe2.StdMapNode.Left));
-            queue.Enqueue(Ptr(node + Poe2.StdMapNode.Right));
+            // One read for the whole node — Left/Right/IsNil/KeyId/ValueEntityPtr are contiguous in
+            // 48 bytes, so this replaces 5 separate ReadProcessMemory syscalls per node with one.
+            if (_reader.TryReadBytes(node, _nodeBuf) < _nodeBuf.Length) continue;
+            if (_nodeBuf[Poe2.StdMapNode.IsNil] != 0) continue;
+
+            var id = BitConverter.ToUInt32(_nodeBuf, Poe2.StdMapNode.KeyId);
+            var entity = (nint)BitConverter.ToInt64(_nodeBuf, Poe2.StdMapNode.ValueEntityPtr);
+            _entQueue.Enqueue((nint)BitConverter.ToInt64(_nodeBuf, Poe2.StdMapNode.Left));
+            _entQueue.Enqueue((nint)BitConverter.ToInt64(_nodeBuf, Poe2.StdMapNode.Right));
 
             if (entity == 0 || id >= Poe2.EntityList.VisualIdThreshold) continue;
+
+            // Recycle guard: entity addresses are reused within an area. If this address now
+            // carries a different id, the prior occupant is gone — evict stale component caches.
+            if (_idAt.TryGetValue(entity, out var prevId) && prevId != id) EvictEntity(entity);
+            _idAt[entity] = id;
+
             var world = EntityWorld(entity);
             if (world is not { } wv) continue;
             var g = new System.Numerics.Vector2(wv.X / Poe2.WorldToGridRatio, wv.Y / Poe2.WorldToGridRatio);
@@ -204,23 +285,73 @@ public sealed class Poe2Live
             int hpCur = 0, hpMax = 0;
             var rarity = Rarity.NonMonster;
             var opened = false;
+            bool isBoss = false, isLocked = false, isLarge = false;
+            bool isTargetable = true;
+            float scale = 1f;
+            int baseSpeed = -1;
             if (cat is EntityCategory.Monster or EntityCategory.Player) (hpCur, hpMax) = ReadHp(entity);
             if (cat is EntityCategory.Monster or EntityCategory.Chest) rarity = ReadRarity(entity);
-            if (cat == EntityCategory.Chest) opened = ReadChestOpened(entity);
+            if (cat == EntityCategory.Monster) isBoss = ReadIsBoss(entity);
+            if (cat == EntityCategory.Chest) { opened = ReadChestOpened(entity); isLocked = ReadIsLocked(entity); isLarge = ReadIsLarge(entity); }
+            isTargetable = ReadIsTargetable(entity);
+            scale = ReadScale(entity);
+            baseSpeed = ReadBaseSpeed(entity);
 
-            dots.Add(new EntityDot(id, entity, g, wv, cat, _meta.GetValueOrDefault(entity, ""), hpCur, hpMax,
-                HasIcon(entity), ReadReaction(entity), rarity, opened));
+            var league = DetectLeague(_meta.GetValueOrDefault(entity, ""));
+            var (poi, iconComplete) = ReadIcon(entity);
+            var dot = new EntityDot(id, entity, g, wv, cat, _meta.GetValueOrDefault(entity, ""), hpCur, hpMax,
+                poi, ReadReaction(entity), rarity, opened,
+                isBoss, isTargetable, isLocked, isLarge, scale, baseSpeed, league, iconComplete);
+            dots.Add(dot);
+            liveIds.Add(id);
+
+            if (ShouldPersist(cat))
+                _persistentCache[id] = dot;
         }
+
+        merge:
+        foreach (var (id, cached) in _persistentCache)
+        {
+            if (liveIds.Contains(id)) continue;
+            if (cached.Category == EntityCategory.Chest && cached.Opened) continue;
+            dots.Add(cached);
+        }
+
+        // Dedup transitions stacked at the same grid cell (game spawns many overlapping transition entities)
+        var seenTransPos = new HashSet<(int, int)>();
+        for (int i = dots.Count - 1; i >= 0; i--)
+        {
+            if (dots[i].Category != EntityCategory.Transition) continue;
+            var key = ((int)dots[i].Grid.X, (int)dots[i].Grid.Y);
+            if (!seenTransPos.Add(key))
+                dots.RemoveAt(i);
+        }
+
         return dots;
     }
 
-    /// <summary>Whether the entity has a MinimapIcon component — i.e. the game marks it as a POI.</summary>
-    private bool HasIcon(nint entity)
+    private void EvictEntity(nint entity)
     {
-        if (_hasIcon.TryGetValue(entity, out var has)) return has;
-        has = ResolveComponent(entity, "MinimapIcon") != 0;
-        _hasIcon[entity] = has;
-        return has;
+        _renderAddr.Remove(entity); _lifeAddr.Remove(entity); _posAddr.Remove(entity);
+        _ompAddr.Remove(entity); _chestAddr.Remove(entity); _monsterAddr.Remove(entity);
+        _targetableAddr.Remove(entity); _pathfindingAddr.Remove(entity);
+        _category.Remove(entity); _meta.Remove(entity); _iconAddr.Remove(entity);
+    }
+
+    /// <summary>
+    /// The entity's POI state from its MinimapIcon component. The component stays put once resolved,
+    /// so we cache only its ADDRESS and read CompletedState live every tick (it flips).
+    /// </summary>
+    private (bool poi, bool complete) ReadIcon(nint entity)
+    {
+        if (!_iconAddr.TryGetValue(entity, out var icon))
+        {
+            icon = ResolveComponent(entity, "MinimapIcon");
+            _iconAddr[entity] = icon;
+        }
+        if (icon == 0) return (false, false);
+        var complete = _reader.TryReadStruct<int>(icon + Poe2.MinimapIcon.CompletedState, out var s) && s != 0;
+        return (true, complete);
     }
 
     private Rarity ReadRarity(nint entity)
@@ -255,12 +386,14 @@ public sealed class Poe2Live
             _lifeAddr[entity] = life;
         }
         if (life == 0) return (0, 0);
-        if (!_reader.TryReadStruct<VitalStruct>(life + Poe2.Life.Health, out var v)) return (0, 0);
+        if (!_reader.TryReadStruct<VitalStruct>(life + _healthOff, out var v)) return (0, 0);
         return (v.Current, v.Max);
     }
 
     private List<Landmark>? _landmarks;
     private nint _landmarksKey = -1;
+    private List<TilePathEntry>? _tilePaths;
+    private nint _tilePathsKey = -1;
 
     /// <summary>
     /// Static tile-based landmarks for the area (boss arenas, treasure, waypoints, mechanics…).
@@ -283,62 +416,93 @@ public sealed class Poe2Live
         if (!_reader.TryReadStruct<long>(terrain + Poe2.Terrain.TotalTiles, out var tilesX) || tilesX <= 0) return result;
         var first = Ptr(terrain + Poe2.Terrain.TileDetailsPtr);
         if (!_reader.TryReadStruct<nint>(terrain + Poe2.Terrain.TileDetailsPtr + 8, out var last) || first == 0) return result;
-        var count = ((long)last - (long)first) / Poe2.TileStructureSize;
-        if (count is <= 0 or > 1_000_000) return result;
+        var totalTiles = ((long)last - (long)first) / Poe2.TileStructureSize;
+        if (totalTiles is <= 0 or > 1_000_000) return result;
 
         var ac = AreaCode(areaInstance);
-        var pathCache = new Dictionary<nint, (string? path, string? label)>();
+        var pathCache = new Dictionary<nint, string?>();
         var sumX = new Dictionary<string, double>();
         var sumY = new Dictionary<string, double>();
         var num = new Dictionary<string, int>();
-        var labels = new Dictionary<string, string>();
+        var customLabels = new Dictionary<string, string>();
 
-        for (long i = 0; i < count; i++)
+        for (long i = 0; i < totalTiles; i++)
         {
             var tile = first + (nint)(i * Poe2.TileStructureSize);
             var tgtFile = Ptr(tile + Poe2.TileStructure.TgtFilePtr);
             if (tgtFile == 0) continue;
-            if (!pathCache.TryGetValue(tgtFile, out var cached))
+            if (!pathCache.TryGetValue(tgtFile, out var p))
             {
-                var p = ReadStdWString(tgtFile + Poe2.TgtFileStruct.TgtPath);
-                var customLabel = CustomLandmarkData.TryMatch(ac, p);
-                if (customLabel != null)
-                    cached = (p, customLabel);
-                else if (IsInterestingLandmark(p))
-                    cached = (p, null);
-                else
-                    cached = (null, null);
-                pathCache[tgtFile] = cached;
+                p = ReadStdWString(tgtFile + Poe2.TgtFileStruct.TgtPath);
+                if (string.IsNullOrEmpty(p)) p = null;
+                pathCache[tgtFile] = p;
             }
-            if (cached.path is null) continue;
+            if (p is null) continue;
 
-            var key = cached.path;
             var gx = (i % tilesX) * Poe2.Terrain.TileGridCells;
             var gy = (i / tilesX) * Poe2.Terrain.TileGridCells;
-            sumX[key] = sumX.GetValueOrDefault(key) + gx;
-            sumY[key] = sumY.GetValueOrDefault(key) + gy;
-            num[key] = num.GetValueOrDefault(key) + 1;
-            if (cached.label != null)
-                labels[key] = cached.label;
+            sumX[p] = sumX.GetValueOrDefault(p) + gx;
+            sumY[p] = sumY.GetValueOrDefault(p) + gy;
+            num[p] = num.GetValueOrDefault(p) + 1;
+
+            if (!customLabels.ContainsKey(p))
+            {
+                var label = CustomLandmarkData.TryMatch(ac, p);
+                if (label != null) customLabels[p] = label;
+            }
         }
 
         foreach (var (path, n) in num)
         {
-            var name = labels.TryGetValue(path, out var custom) ? custom : LandmarkName(path);
+            var hasCustom = customLabels.TryGetValue(path, out var custom);
+            if (!hasCustom && !IsInterestingLandmark(path))
+                continue;
+            var name = hasCustom ? custom! : LandmarkName(path);
             result.Add(new Landmark(name, path,
                 new System.Numerics.Vector2((float)(sumX[path] / n), (float)(sumY[path] / n)), n));
         }
         return result;
     }
 
+    private static readonly string[] _interestingKeywords = [
+        "Arena", "Boss", "Treasure", "Waypoint", "Encounter", "Ritual",
+        "Vault", "Reward", "Checkpoint", "Altar", "Shrine",
+        "AreaTransition", "Landmark", "Entrance_", "BossRoom",
+        "Medallion", "Sinkhole", "StairsUp", "StairsDown",
+        "Market", "Well_", "Blacksmith", "StoryGlyph", "Courtyard",
+        "Gallows", "GrandEntrance", "Spire", "Clearing", "Dolmen",
+        "Strongbox", "Monolith", "HealingWell",
+    ];
+
     private static bool IsInterestingLandmark(string p)
     {
         if (string.IsNullOrEmpty(p)) return false;
-        foreach (var kw in new[] { "Arena", "Boss", "Treasure", "Waypoint", "Encounter", "Ritual",
-                                   "Vault", "Reward", "Checkpoint", "Altar", "Shrine",
-                                   "AreaTransition", "Landmark", "Entrance_", "BossRoom",
-                                   "Medallion", "Sinkhole", "StairsUp", "StairsDown" })
-            if (p.Contains(kw, StringComparison.Ordinal)) return true;
+        foreach (var kw in _interestingKeywords)
+            if (p.Contains(kw, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static readonly string[] _boringPatterns = [
+        "Blank", "forced_blank", "Fill_", "Fill.", "Groundfill",
+        "Fields_0", "Fields_st_", "FieldsFence", "Fields_nocrop",
+        "Hut_Cv_", "Hut_St_", "Hut_Cc_", "Hut_Intact",
+        "Yurt_", "YurtCv_", "YurtCc_", "YurtSt_", "YurtX_",
+        "Wall_", "WallHut_", "WallMarket_", "WallScaffold_", "WallInside",
+        "OuterWall", "Fence", "Road_", "RoadEdge", "RoadOpen",
+        "Slash/St", "Slash/Cc", "Slash/Cv", "Slash/Fill",
+        "SlashRockpile", "Slash_Rockpile", "RiverSlash",
+        "Rockpile/St", "Rockpile/Cc", "WideRiver",
+        "Outer/Fields", "Outer/St_", "Outer/Cv_", "Outer/Cc_",
+        "Outer_Burned", "NoCrop/Blank", "Encampment_0",
+        "LightController", "EnableRendering", "DisableRendering",
+        "ManorFill", "_divider",
+    ];
+
+    private static bool IsBoringTile(string p)
+    {
+        if (string.IsNullOrEmpty(p)) return true;
+        foreach (var pat in _boringPatterns)
+            if (p.Contains(pat, StringComparison.Ordinal)) return true;
         return false;
     }
 
@@ -347,6 +511,55 @@ public sealed class Poe2Live
         var slash = path.LastIndexOf('/');
         var name = slash >= 0 ? path[(slash + 1)..] : path;
         return name.EndsWith(".tdt", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+    }
+
+    /// <summary>All unique tile paths in the area, unfiltered. For discovery / debugging.</summary>
+    public IReadOnlyList<TilePathEntry> TilePaths(nint areaInstance)
+    {
+        if (areaInstance == _tilePathsKey && _tilePaths is not null) return _tilePaths;
+        _tilePathsKey = areaInstance;
+        _tilePaths = ScanAllTilePaths(areaInstance);
+        return _tilePaths;
+    }
+
+    private List<TilePathEntry> ScanAllTilePaths(nint areaInstance)
+    {
+        var result = new List<TilePathEntry>();
+        var terrain = areaInstance + Poe2.AreaInstance.TerrainMetadata;
+        if (!_reader.TryReadStruct<long>(terrain + Poe2.Terrain.TotalTiles, out var tilesX) || tilesX <= 0) return result;
+        var first = Ptr(terrain + Poe2.Terrain.TileDetailsPtr);
+        if (!_reader.TryReadStruct<nint>(terrain + Poe2.Terrain.TileDetailsPtr + 8, out var last) || first == 0) return result;
+        var count = ((long)last - (long)first) / Poe2.TileStructureSize;
+        if (count is <= 0 or > 1_000_000) return result;
+
+        var pathCache = new Dictionary<nint, string?>();
+        var sumX = new Dictionary<string, double>();
+        var sumY = new Dictionary<string, double>();
+        var num = new Dictionary<string, int>();
+
+        for (long i = 0; i < count; i++)
+        {
+            var tile = first + (nint)(i * Poe2.TileStructureSize);
+            var tgtFile = Ptr(tile + Poe2.TileStructure.TgtFilePtr);
+            if (tgtFile == 0) continue;
+            if (!pathCache.TryGetValue(tgtFile, out var p))
+            {
+                p = ReadStdWString(tgtFile + Poe2.TgtFileStruct.TgtPath);
+                pathCache[tgtFile] = string.IsNullOrEmpty(p) ? null : p;
+            }
+            if (p is null) continue;
+
+            var gx = (i % tilesX) * Poe2.Terrain.TileGridCells;
+            var gy = (i / tilesX) * Poe2.Terrain.TileGridCells;
+            sumX[p] = sumX.GetValueOrDefault(p) + gx;
+            sumY[p] = sumY.GetValueOrDefault(p) + gy;
+            num[p] = num.GetValueOrDefault(p) + 1;
+        }
+
+        foreach (var (path, n) in num)
+            result.Add(new TilePathEntry(path, new System.Numerics.Vector2((float)(sumX[path] / n), (float)(sumY[path] / n)), n));
+
+        return result;
     }
 
     /// <summary>Read the packed walkable grid (one nibble per cell, 2 cells/byte) into a flat 0/1 array.</summary>
@@ -381,7 +594,8 @@ public sealed class Poe2Live
     }
 
     private readonly List<nint> _mapEls = new();
-    private readonly HashSet<nint> _everHidden = new(); // elements observed with visible-bit clear
+    private readonly HashSet<nint> _everHidden = new();  // elements observed with visible-bit clear
+    private readonly HashSet<nint> _everVisible = new(); // elements observed with visible-bit set
     private nint _mapCacheKey = -1;
 
     /// <summary>
@@ -390,6 +604,10 @@ public sealed class Poe2Live
     /// visible bit actually toggles is the "open the map" signal we gate on; the always-on minimap
     /// element stays visible. Until a toggle is observed, "2 of 2 visible" is treated as open.
     /// </summary>
+    private MinimapUi _lastMinimap;
+
+    public MinimapUi GameMinimap => _lastMinimap;
+
     public MapUi ReadMap(nint inGameState, nint areaInstance)
     {
         if (areaInstance != _mapCacheKey || _mapEls.Count == 0)
@@ -397,27 +615,36 @@ public sealed class Poe2Live
             _mapCacheKey = areaInstance;
             _mapEls.Clear();
             _everHidden.Clear();
+            _everVisible.Clear();
             DiscoverMapElements(inGameState);
         }
 
         var visibleCount = 0;
-        nint toggleable = 0;
         var any = false; MapUi anyUi = default;
+        var sawToggler = false; var togglerVisible = false; var haveTogglerUi = false; MapUi togglerUi = default;
         foreach (var el in _mapEls)
         {
             if (!TryReadMapElement(el, out var vis, out var sx, out var sy, out var zoom)) continue;
-            if (!vis) _everHidden.Add(el);
-            else visibleCount++;
-            if (_everHidden.Contains(el)) toggleable = el;
+            if (vis) { _everVisible.Add(el); visibleCount++; } else _everHidden.Add(el);
             if (!any) { any = true; anyUi = new MapUi(vis, sx, sy, zoom); }
+
+            // A genuine toggler has been seen in BOTH states; permanently-on/off elements never qualify.
+            if (_everVisible.Contains(el) && _everHidden.Contains(el))
+            {
+                sawToggler = true;
+                if (vis) togglerVisible = true;
+                if (vis || !haveTogglerUi) { togglerUi = new MapUi(vis, sx, sy, zoom); haveTogglerUi = true; }
+            }
+            else if (!_everHidden.Contains(el))
+            {
+                _lastMinimap = new MinimapUi(true, sx, sy, zoom);
+            }
         }
         if (!any) return default;
 
-        // Projection params come from the toggleable (full) map once known, else the first found.
-        if (toggleable != 0 && TryReadMapElement(toggleable, out var tv, out var tsx, out var tsy, out var tz))
-            return new MapUi(tv, tsx, tsy, tz);
+        if (sawToggler)
+            return new MapUi(togglerVisible, togglerUi.ShiftX, togglerUi.ShiftY, togglerUi.Zoom);
 
-        // Not yet observed a toggle: treat "both visible" as open.
         return new MapUi(visibleCount >= 2, anyUi.ShiftX, anyUi.ShiftY, anyUi.Zoom);
     }
 
@@ -493,16 +720,80 @@ public sealed class Poe2Live
         return _reader.TryReadStruct<byte>(c + Poe2.ChestComponent.OpenState, out var b) && b == 0;
     }
 
+    private bool ReadIsBoss(nint entity)
+    {
+        if (!_monsterAddr.TryGetValue(entity, out var m)) { m = ResolveComponent(entity, "Monster"); _monsterAddr[entity] = m; }
+        if (m == 0) return false;
+        return _reader.TryReadStruct<byte>(m + Poe2.MonsterComponent.IsBoss, out var b) && b != 0;
+    }
+
+    private bool ReadIsTargetable(nint entity)
+    {
+        if (!_targetableAddr.TryGetValue(entity, out var t)) { t = ResolveComponent(entity, "Targetable"); _targetableAddr[entity] = t; }
+        if (t == 0) return true;
+        return !_reader.TryReadStruct<byte>(t + Poe2.Targetable.IsTargetable, out var b) || b != 0;
+    }
+
+    private bool ReadIsLocked(nint entity)
+    {
+        if (!_chestAddr.TryGetValue(entity, out var c)) { c = ResolveComponent(entity, "Chest"); _chestAddr[entity] = c; }
+        if (c == 0) return false;
+        return _reader.TryReadStruct<byte>(c + Poe2.ChestComponent.Locked, out var b) && b != 0;
+    }
+
+    private bool ReadIsLarge(nint entity)
+    {
+        if (!_chestAddr.TryGetValue(entity, out var c)) { c = ResolveComponent(entity, "Chest"); _chestAddr[entity] = c; }
+        if (c == 0) return false;
+        return _reader.TryReadStruct<byte>(c + Poe2.ChestComponent.Large, out var b) && b != 0;
+    }
+
+    private float ReadScale(nint entity)
+    {
+        if (!_posAddr.TryGetValue(entity, out var pos)) { pos = ResolveComponent(entity, "Positioned"); _posAddr[entity] = pos; }
+        if (pos == 0) return 1f;
+        return _reader.TryReadStruct<float>(pos + Poe2.Positioned.Scale, out var s) && s > 0.01f ? s : 1f;
+    }
+
+    private int ReadBaseSpeed(nint entity)
+    {
+        if (!_pathfindingAddr.TryGetValue(entity, out var pf)) { pf = ResolveComponent(entity, "Pathfinding"); _pathfindingAddr[entity] = pf; }
+        if (pf == 0) return -1;
+        return _reader.TryReadStruct<int>(pf + Poe2.PathfindingComponent.BaseSpeed, out var s) ? s : -1;
+    }
+
+    private static LeagueMechanic DetectLeague(string meta)
+    {
+        if (string.IsNullOrEmpty(meta)) return LeagueMechanic.None;
+        if (!meta.Contains("/Monsters/", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.None;
+        if (meta.Contains("Expedition", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Expedition;
+        if (meta.Contains("/Breach", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Breach;
+        if (meta.Contains("Ritual", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Ritual;
+        if (meta.Contains("Delirium", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Delirium;
+        if (meta.Contains("Abyss", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Abyss;
+        if (meta.Contains("Incursion", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Incursion;
+        if (meta.Contains("Legion", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Legion;
+        if (meta.Contains("Betrayal", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Betrayal;
+        if (meta.Contains("Ultimatum", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Ultimatum;
+        if (meta.Contains("Sanctum", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Sanctum;
+        if (meta.Contains("Delve", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Delve;
+        if (meta.Contains("Heist", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Heist;
+        if (meta.Contains("Blight", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Blight;
+        if (meta.Contains("Hellscape", StringComparison.OrdinalIgnoreCase)) return LeagueMechanic.Hellscape;
+        return LeagueMechanic.None;
+    }
+
+    /// <summary>Resolve a component address by name. Public for use by the component inspector.</summary>
+    public nint ResolveComponentAddress(nint entity, string name) => ResolveComponent(entity, name);
+
     /// <summary>WorldToScreen matrix (16 floats, row-major) from Camera@InGameState+0x368. Null if unavailable.</summary>
     public float[]? CameraMatrix(nint inGameState)
     {
         var cam = Ptr(inGameState + Poe2.InGameState.Camera);
         if (cam == 0) return null;
-        var b = new byte[64];
-        if (_reader.TryReadBytes(cam + Poe2.Camera.WorldToScreenMatrix, b) != 64) return null;
-        var m = new float[16];
-        System.Buffer.BlockCopy(b, 0, m, 0, 64);
-        return m;
+        if (_reader.TryReadBytes(cam + Poe2.Camera.WorldToScreenMatrix, _camBytes) != 64) return null;
+        System.Buffer.BlockCopy(_camBytes, 0, _camMatrix, 0, 64);
+        return _camMatrix;
     }
 
     private EntityCategory Categorize(nint entity)

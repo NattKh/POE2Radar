@@ -111,13 +111,16 @@ public static class Poe2
 
     // ── Components (offsets from the component object base) ───────────────────
 
-    /// <summary>Life — ✓ validated live (442/442 HP, 271 mana, 186/186 ES).</summary>
+    /// <summary>Life — ✓ re-validated live 2026-06-04 after the patch (980/980 HP, 427 mana, 274 ES).
+    /// The vital blocks slid (each grew ~8 bytes): Health 0x1A8→0x1B0, Mana 0x1F8→0x208, ES 0x230→0x248.
+    /// The VitalStruct's internal layout (Max@+0x2C, Current@+0x30) was UNCHANGED — only these
+    /// per-vital offsets moved. (Prior build: 442/442 HP, 271 mana, 186/186 ES at 0x1A8/0x1F8/0x230.)</summary>
     public static class Life
     {
         public const int Owner        = 0x008; // ComponentHeader.EntityPtr (back-pointer to entity)
-        public const int Health       = 0x1A8; // ✓ VitalStruct
-        public const int Mana         = 0x1F8; // ✓ VitalStruct
-        public const int EnergyShield = 0x230; // ✓ VitalStruct
+        public const int Health       = 0x1B0; // ✓ VitalStruct (was 0x1A8 pre-patch)
+        public const int Mana         = 0x208; // ✓ VitalStruct (was 0x1F8 pre-patch)
+        public const int EnergyShield = 0x248; // ✓ VitalStruct (was 0x230 pre-patch)
     }
 
     /// <summary>VitalStruct — ✓ (Max/Current confirmed). Reuse <see cref="VitalStruct"/> for reads.</summary>
@@ -129,9 +132,18 @@ public static class Poe2
         public const int Current      = 0x30; // ✓
     }
 
-    /// <summary>Render component.</summary>
+    /// <summary>Render component. Byte setter: sub_1415B9C20 (IDA).</summary>
     public static class Render
     {
+        public const int AlwaysShowHover      = 0x77;  // (IDA) byte — entity always highlights on hover
+        public const int HideHover            = 0x78;  // (IDA) byte — entity never highlights
+        public const int HideMiniLifeBar      = 0x79;  // (IDA) byte — hides in-game HP bar ✓
+        public const int HideInfoDisplay      = 0x7A;  // (IDA) byte — hides info tooltip
+        public const int NoSelectionBox       = 0x81;  // (IDA) byte — disables click targeting
+        public const int DisableRendering     = 0x82;  // (IDA) byte — makes entity invisible
+        public const int HideAllBuffVisuals   = 0x83;  // (IDA) byte — strips buff/debuff VFX
+        public const int ForceOutline         = 0x85;  // (IDA) byte — force_outline_no_alphatest
+        public const int HideTalismanIcon     = 0x7B;  // (IDA) byte — hides overhead icon
         public const int CurrentWorldPosition = 0x138; // ✓ Vector3 (X,Y,Z); grid = XY / WorldToGridRatio
         public const int ModelBounds          = 0x144; // candidate (3 floats right after world pos)
     }
@@ -152,6 +164,16 @@ public static class Poe2
         public const int Zoom = 0x528; // float, == 1.0 confirmed
     }
 
+    /// <summary>MinimapIcon component — present on entities the game marks as map POIs (waypoints,
+    /// checkpoints, league encounters…). <see cref="CompletedState"/> is an int the game flips when a
+    /// repeatable encounter is finished: it then FADES the icon rather than removing it. ✓ validated
+    /// live on an Expedition2Encounter — 0 while not-started/ready/active/looting, 1 after the reward
+    /// was claimed. Read it live (don't cache the value): the component stays put; only the flag flips.</summary>
+    public static class MinimapIcon
+    {
+        public const int CompletedState = 0x10; // ✓ int — 0 = active/shown, non-zero = completed/faded
+    }
+
     /// <summary>ObjectMagicProperties component — monster/chest rarity.</summary>
     public static class ObjectMagicProperties
     {
@@ -159,18 +181,115 @@ public static class Poe2
         public const int Rarity = 0x144;
     }
 
-    /// <summary>Chest component. ✓ validated live (opened chest = 0, closed = 1 at +0x168).</summary>
+    /// <summary>Chest component. ✓ validated live (opened chest = 0, closed = 1 at +0x168).
+    /// Byte setter: sub_141CDF2A0 (IDA). Additional fields from .ot file string search.</summary>
     public static class ChestComponent
     {
-        public const int OpenState = 0x168; // 1 = closed/openable, 0 = opened/used
+        public const int OpeningDestroys = 0x20; // (IDA) byte — chest destroyed on open
+        public const int Large           = 0x21; // (IDA) byte — large chest flag
+        public const int Locked          = 0x25; // (IDA) byte — chest is locked
+        public const int OpenState       = 0x168; // ✓ 1 = closed/openable, 0 = opened/used
     }
 
-    /// <summary>Positioned component.</summary>
+    /// <summary>Positioned component. Byte setter: sub_141CFE050, int setter: sub_141CFDAD0 (IDA).</summary>
     public static class Positioned
     {
+        public const int ObjectSize  = 0x10;  // (IDA) byte — entity collision size
+        public const int Team        = 0x16;  // (IDA) word — team id (1 = player)
+        public const int Blocking    = 0x1A;  // (IDA) byte — blocks pathing
+        public const int DoesNotPushWhenPushed = 0x21; // (IDA) byte
+        public const int IgnoreBeingPushed     = 0x22; // (IDA) byte
+        public const int PhaseThrough          = 0x1E; // (IDA) byte — phase_through_small_gaps_of_blocking_terrain
+        public const int Scale       = 0x74;  // (IDA) float — visual scale (value/100 from .ot)
         // ✓ validated live: player (friendly) = 0x01, hostile MastodonBoss = 0x00.
-        // GameHelper2 rule: IsFriendly = (Reaction & 0x7F) == 1.
-        public const int Reaction = 0x1E0;
+        public const int Reaction    = 0x1E0;
+    }
+
+    /// <summary>Monster component. Byte setter: sub_141CBA7F0 (IDA).</summary>
+    public static class MonsterComponent
+    {
+        public const int IsBoss              = 0x27; // (IDA) byte
+        public const int FlipEnabled         = 0x26; // (IDA) byte
+        public const int DisableDefaultStats = 0x24; // (IDA) byte
+    }
+
+    /// <summary>Targetable component. Byte setter: sub_1417263A0 (IDA).</summary>
+    public static class Targetable
+    {
+        public const int Attackable     = 0x17; // (IDA) byte
+        public const int IsTargetable   = 0x18; // (IDA) byte
+        public const int ForceTarget    = 0x19; // (IDA) byte
+        public const int NoHighlight    = 0x1A; // (IDA) byte
+    }
+
+    /// <summary>Pathfinding component. Int setter: sub_141CBD6E0 (IDA).</summary>
+    public static class PathfindingComponent
+    {
+        public const int BaseSpeed       = 0xEC; // (IDA) int — movement speed
+        public const int AvoidOthers     = 0xD0; // (IDA) byte
+        public const int Flying          = 0xE5; // (IDA) byte
+        public const int MaintainHeight  = 0xE8; // (IDA) byte
+    }
+
+    /// <summary>AreaTransition component. Float setter: sub_141CD2AA0 (IDA).</summary>
+    public static class AreaTransitionComponent
+    {
+        public const int GracePeriod    = 0x18; // (IDA) float
+        public const int TeleportDelay  = 0x1C; // (IDA) float
+    }
+
+    /// <summary>InteractionAction component. Byte/Int/Float setters (IDA).</summary>
+    public static class InteractionActionComponent
+    {
+        public const int DistanceOverride        = 0x1C2; // (IDA) byte
+        public const int ConsoleDistanceOverride = 0x1C3; // (IDA) byte
+        public const int ForceHumanForm          = 0x1BF; // (IDA) byte
+        public const int MinionsCanInteract      = 0x1CA; // (IDA) byte
+        public const int InteractionDuration     = 0x1E4; // (IDA) float
+    }
+
+    /// <summary>Animated component. Byte setter: sub_141CC9620 (IDA).</summary>
+    public static class AnimatedComponent
+    {
+        public const int ContinueAnimations       = 0xC1; // (IDA) byte
+        public const int SerialiseAnimProgress     = 0xC2; // (IDA) byte
+        public const int AlwaysInterpolateBearing  = 0xC4; // (IDA) byte
+    }
+
+    /// <summary>Transitionable component. Int setter: sub_141D290F0 (IDA).</summary>
+    public static class TransitionableComponent
+    {
+        public const int NumStates                = 0xB0; // (IDA) byte (2-127)
+        public const int TransitionOnDamageTaken  = 0xB1; // (IDA) byte
+    }
+
+    /// <summary>NPC component. Byte setter: sub_141CBEFD0 (IDA).</summary>
+    public static class NpcComponent
+    {
+        public const int MarkerEnabled     = 0x20; // (IDA) byte
+    }
+
+    /// <summary>Sockets component. Internal struct — not exposed via .ot scripts.</summary>
+    public static class SocketsComponent
+    {
+        public const int SocketSlotsBegin = 0x30; // (IDA) StdVector of socket slot pointers
+        public const int SocketSlotsEnd   = 0x38; // (IDA)
+        public const int LinkedGroupBegin = 0x60; // (IDA) link group data
+    }
+
+    /// <summary>Quality component. sub_140A40630 (IDA).</summary>
+    public static class QualityComponent
+    {
+        public const int QualityValue = 0x370; // (IDA) byte — item quality %
+    }
+
+    /// <summary>Charges component (flasks/items). Int setter: sub_142577A10 (IDA).</summary>
+    public static class ChargesComponent
+    {
+        public const int MaxCharges       = 0x10; // (IDA) int
+        public const int CurrentCharges   = 0x14; // (IDA) int (runtime)
+        public const int ChargesPerUse    = 0x18; // (IDA) int
+        public const int ChargesPerUseBase = 0x1C; // (IDA) int (base copy)
     }
 
     /// <summary>
@@ -239,5 +358,7 @@ public static class Poe2
         public const int FlagVisibleBit = 0x0B;  // ✓ visible bit (set when shown)
         // Full visibility is hierarchical: an element is shown iff its own bit 0x0B AND every
         // ancestor's bit are set. Walk Parent up to UiRoot (Parent offset still TBD).
+        // TODO: Position/Size offsets needed for pixel-perfect minimap overlay alignment.
+        // Need to probe a known UiElement with CE to find screen rect floats.
     }
 }
